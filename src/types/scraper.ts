@@ -110,8 +110,9 @@ export interface ScraperJob {
   source: string;
   jobType: 'discovery' | 'deep_sync' | 'lifecycle_check';
   
-  status: 'idle' | 'running' | 'completed' | 'failed' | 'paused';
-  startedAt: string;
+  // Fixed status set: pending | running | completed | failed
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  startedAt: string | null;
   completedAt: string | null;
   durationSeconds: number | null;
   
@@ -131,6 +132,7 @@ export interface ScraperJob {
   }>;
   
   triggeredBy: 'scheduler' | 'manual' | 'api';
+  createdAt: string;
 }
 
 // ===== SCRAPER CONFIG =====
@@ -140,8 +142,8 @@ export interface ScraperConfig {
   paused: boolean;
   
   discoveryFrequencyMinutes: number;
-  deepSyncFrequencyMinutes: number;
-  requestsPerMinute: number;
+  maxPagesPerRun: number;
+  maxListingsPerRun: number;
   delayBetweenRequestsMs: number;
   goneAfterConsecutiveMisses: number;
 }
