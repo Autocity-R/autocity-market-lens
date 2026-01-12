@@ -1,4 +1,4 @@
-import { mockListings, type Listing } from '@/lib/mockData';
+import { useListings } from '@/hooks/useListings';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,8 @@ import {
   Eye,
   Bookmark,
   BarChart3,
+  RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -19,22 +21,51 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import type { ScraperListing } from '@/types/scraper';
 
 export function ListingTable() {
-  const getConfidenceBadge = (score: number) => {
+  const { data, isLoading, error } = useListings({ status: 'active' });
+
+  const getConfidenceBadge = (score: number | null) => {
+    if (!score) return 'badge-confidence-low';
     if (score >= 90) return 'badge-confidence-high';
     if (score >= 75) return 'badge-confidence-medium';
     return 'badge-confidence-low';
   };
 
-  const formatPrice = (price: number) => `€${price.toLocaleString()}`;
+  const formatPrice = (price: number | null) => price ? `€${price.toLocaleString()}` : '-';
 
-  const getPriceChange = (listing: Listing) => {
-    if (!listing.previousPrice) return null;
+  const getPriceChange = (listing: ScraperListing) => {
+    if (!listing.previousPrice || !listing.price) return null;
     const change = listing.price - listing.previousPrice;
     const percentage = ((change / listing.previousPrice) * 100).toFixed(1);
     return { change, percentage };
   };
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="stat-card overflow-hidden">
+        <div className="flex items-center justify-center h-64">
+          <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="stat-card overflow-hidden">
+        <div className="flex flex-col items-center justify-center h-64 gap-2">
+          <AlertCircle className="h-8 w-8 text-destructive" />
+          <p className="text-sm text-muted-foreground">Fout bij laden van listings</p>
+        </div>
+      </div>
+    );
+  }
+
+  const listings = data?.data || [];
 
   return (
     <div className="stat-card overflow-hidden">
@@ -72,7 +103,7 @@ export function ListingTable() {
             </tr>
           </thead>
           <tbody>
-            {mockListings.map((listing) => {
+            {listings.map((listing) => {
               const priceChange = getPriceChange(listing);
               return (
                 <tr
@@ -108,14 +139,14 @@ export function ListingTable() {
                     </div>
                   </td>
                   <td className="py-3 text-right text-sm text-muted-foreground">
-                    {listing.mileage.toLocaleString()} km
+                    {listing.mileage ? listing.mileage.toLocaleString() : '-'} km
                   </td>
                   <td className="py-3">
-                    <p className="text-sm text-foreground">{listing.dealer}</p>
+                    <p className="text-sm text-foreground">{listing.dealerName || '-'}</p>
                   </td>
                   <td className="py-3 text-center">
-                    <Badge variant="outline" className="text-xs">
-                      {listing.portal}
+                    <Badge variant="outline" className="text-xs capitalize">
+                      {listing.source}
                     </Badge>
                   </td>
                   <td className="py-3 text-center">
@@ -128,15 +159,19 @@ export function ListingTable() {
                     </span>
                   </td>
                   <td className="py-3 text-center">
-                    <CourantheidBadge
-                      score={listing.courantheid}
-                      trend={listing.courantheidTrend}
-                      compact
-                    />
+                    {listing.courantheidScore && listing.courantheidTrend ? (
+                      <CourantheidBadge
+                        score={listing.courantheidScore}
+                        trend={listing.courantheidTrend}
+                        compact
+                      />
+                    ) : (
+                      <span className="text-xs text-muted-foreground">-</span>
+                    )}
                   </td>
                   <td className="py-3 text-center">
-                    <Badge className={cn('text-xs', getConfidenceBadge(listing.confidenceScore))}>
-                      {listing.confidenceScore}%
+                    <Badge className={cn('text-xs', getConfidenceBadge(listing.normalizationConfidence))}>
+                      {listing.normalizationConfidence || 0}%
                     </Badge>
                   </td>
                   <td className="py-3">
