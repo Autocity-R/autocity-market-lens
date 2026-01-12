@@ -1,5 +1,21 @@
 // Mock data for Autocity Market Intelligence Platform
 
+export interface SegmentFilters {
+  make: string;
+  model?: string;
+  yearFrom: number;
+  yearTo: number;
+  mileageFrom?: number;
+  mileageTo?: number;
+  fuelType?: string[];
+  transmission?: string;
+  powerFrom?: number;
+  powerTo?: number;
+  batteryFrom?: number;
+  batteryTo?: number;
+  options?: string[];
+}
+
 export interface Listing {
   id: string;
   title: string;
@@ -21,6 +37,8 @@ export interface Listing {
   firstSeen: string;
   lastUpdated: string;
   status: 'active' | 'sold' | 'removed';
+  courantheid: number;
+  courantheidTrend: 'up' | 'down' | 'stable';
 }
 
 export interface Dealer {
@@ -33,6 +51,7 @@ export interface Dealer {
   soldLastMonth: number;
   pricingStrategy: 'aggressive' | 'market' | 'premium';
   responseTime: string;
+  avgCourantheid: number;
 }
 
 export interface MarketSegment {
@@ -46,16 +65,27 @@ export interface MarketSegment {
   avgPrice: number;
   priceChange7d: number;
   courantheid: number;
+  courantheidTrend: 'up' | 'down' | 'stable';
+  filters: SegmentFilters;
+  avgConfidence: number;
+  createdAt: string;
+  isWatched: boolean;
+  linkedAlerts: number;
+  linkedToInventory: boolean;
 }
 
 export interface Alert {
   id: string;
-  type: 'price_drop' | 'new_listing' | 'segment_change' | 'competitor' | 'inventory';
+  type: 'price_drop' | 'new_listing' | 'segment_change' | 'competitor' | 'inventory' | 'segment' | 'listing' | 'dealer';
   title: string;
   description: string;
   severity: 'info' | 'warning' | 'critical';
   timestamp: string;
   isRead: boolean;
+  segmentId?: string;
+  segmentName?: string;
+  dealerId?: string;
+  dealerName?: string;
 }
 
 export interface CrawlerJob {
@@ -90,7 +120,9 @@ export const mockListings: Listing[] = [
     confidenceScore: 94,
     firstSeen: '2024-12-19',
     lastUpdated: '2025-01-10',
-    status: 'active'
+    status: 'active',
+    courantheid: 87,
+    courantheidTrend: 'stable'
   },
   {
     id: 'L002',
@@ -111,7 +143,9 @@ export const mockListings: Listing[] = [
     confidenceScore: 91,
     firstSeen: '2024-11-27',
     lastUpdated: '2025-01-11',
-    status: 'active'
+    status: 'active',
+    courantheid: 72,
+    courantheidTrend: 'down'
   },
   {
     id: 'L003',
@@ -133,7 +167,9 @@ export const mockListings: Listing[] = [
     confidenceScore: 87,
     firstSeen: '2024-11-05',
     lastUpdated: '2025-01-09',
-    status: 'active'
+    status: 'active',
+    courantheid: 58,
+    courantheidTrend: 'down'
   },
   {
     id: 'L004',
@@ -154,7 +190,9 @@ export const mockListings: Listing[] = [
     confidenceScore: 96,
     firstSeen: '2024-12-30',
     lastUpdated: '2025-01-11',
-    status: 'active'
+    status: 'active',
+    courantheid: 91,
+    courantheidTrend: 'up'
   },
   {
     id: 'L005',
@@ -175,7 +213,9 @@ export const mockListings: Listing[] = [
     confidenceScore: 98,
     firstSeen: '2025-01-03',
     lastUpdated: '2025-01-11',
-    status: 'active'
+    status: 'active',
+    courantheid: 94,
+    courantheidTrend: 'up'
   },
   {
     id: 'L006',
@@ -197,7 +237,9 @@ export const mockListings: Listing[] = [
     confidenceScore: 92,
     firstSeen: '2024-12-08',
     lastUpdated: '2025-01-10',
-    status: 'active'
+    status: 'active',
+    courantheid: 89,
+    courantheidTrend: 'stable'
   },
   {
     id: 'L007',
@@ -218,7 +260,9 @@ export const mockListings: Listing[] = [
     confidenceScore: 72,
     firstSeen: '2024-11-16',
     lastUpdated: '2025-01-08',
-    status: 'active'
+    status: 'active',
+    courantheid: 65,
+    courantheidTrend: 'down'
   },
   {
     id: 'L008',
@@ -239,7 +283,9 @@ export const mockListings: Listing[] = [
     confidenceScore: 99,
     firstSeen: '2025-01-06',
     lastUpdated: '2025-01-11',
-    status: 'active'
+    status: 'active',
+    courantheid: 96,
+    courantheidTrend: 'up'
   }
 ];
 
@@ -253,7 +299,8 @@ export const mockDealers: Dealer[] = [
     avgPriceVsMarket: -2.3,
     soldLastMonth: 42,
     pricingStrategy: 'aggressive',
-    responseTime: '< 2 uur'
+    responseTime: '< 2 uur',
+    avgCourantheid: 82
   },
   {
     id: 'D002',
@@ -264,7 +311,8 @@ export const mockDealers: Dealer[] = [
     avgPriceVsMarket: 4.5,
     soldLastMonth: 23,
     pricingStrategy: 'premium',
-    responseTime: '< 4 uur'
+    responseTime: '< 4 uur',
+    avgCourantheid: 71
   },
   {
     id: 'D003',
@@ -275,7 +323,8 @@ export const mockDealers: Dealer[] = [
     avgPriceVsMarket: 1.2,
     soldLastMonth: 38,
     pricingStrategy: 'market',
-    responseTime: '< 1 dag'
+    responseTime: '< 1 dag',
+    avgCourantheid: 78
   },
   {
     id: 'D004',
@@ -286,7 +335,8 @@ export const mockDealers: Dealer[] = [
     avgPriceVsMarket: 3.8,
     soldLastMonth: 31,
     pricingStrategy: 'premium',
-    responseTime: '< 2 uur'
+    responseTime: '< 2 uur',
+    avgCourantheid: 88
   },
   {
     id: 'D005',
@@ -297,7 +347,8 @@ export const mockDealers: Dealer[] = [
     avgPriceVsMarket: -0.5,
     soldLastMonth: 29,
     pricingStrategy: 'market',
-    responseTime: '< 4 uur'
+    responseTime: '< 4 uur',
+    avgCourantheid: 91
   }
 ];
 
@@ -312,7 +363,23 @@ export const mockSegments: MarketSegment[] = [
     count: 1247,
     avgPrice: 26340,
     priceChange7d: -1.8,
-    courantheid: 87
+    courantheid: 87,
+    courantheidTrend: 'stable',
+    filters: {
+      make: 'Volkswagen',
+      model: 'Golf',
+      yearFrom: 2020,
+      yearTo: 2023,
+      mileageFrom: 0,
+      mileageTo: 100000,
+      fuelType: ['Benzine', 'Diesel'],
+      transmission: 'Alle'
+    },
+    avgConfidence: 92,
+    createdAt: '2024-12-01',
+    isWatched: true,
+    linkedAlerts: 2,
+    linkedToInventory: true
   },
   {
     id: 'S002',
@@ -324,7 +391,23 @@ export const mockSegments: MarketSegment[] = [
     count: 892,
     avgPrice: 34520,
     priceChange7d: 0.5,
-    courantheid: 82
+    courantheid: 82,
+    courantheidTrend: 'up',
+    filters: {
+      make: 'BMW',
+      model: '3 Serie',
+      yearFrom: 2019,
+      yearTo: 2022,
+      mileageFrom: 0,
+      mileageTo: 120000,
+      fuelType: ['Benzine'],
+      transmission: 'Automaat'
+    },
+    avgConfidence: 89,
+    createdAt: '2024-11-15',
+    isWatched: true,
+    linkedAlerts: 1,
+    linkedToInventory: false
   },
   {
     id: 'S003',
@@ -336,7 +419,24 @@ export const mockSegments: MarketSegment[] = [
     count: 634,
     avgPrice: 41890,
     priceChange7d: -3.2,
-    courantheid: 91
+    courantheid: 91,
+    courantheidTrend: 'down',
+    filters: {
+      make: 'Tesla',
+      model: 'Model 3',
+      yearFrom: 2020,
+      yearTo: 2023,
+      mileageFrom: 0,
+      mileageTo: 80000,
+      fuelType: ['Elektrisch'],
+      batteryFrom: 50,
+      batteryTo: 100
+    },
+    avgConfidence: 95,
+    createdAt: '2024-10-20',
+    isWatched: true,
+    linkedAlerts: 3,
+    linkedToInventory: true
   },
   {
     id: 'S004',
@@ -348,41 +448,89 @@ export const mockSegments: MarketSegment[] = [
     count: 756,
     avgPrice: 29870,
     priceChange7d: -0.8,
-    courantheid: 79
+    courantheid: 79,
+    courantheidTrend: 'stable',
+    filters: {
+      make: 'Mercedes-Benz',
+      model: 'C-Klasse',
+      yearFrom: 2018,
+      yearTo: 2021,
+      mileageFrom: 0,
+      mileageTo: 150000,
+      fuelType: ['Benzine', 'Diesel'],
+      transmission: 'Automaat'
+    },
+    avgConfidence: 86,
+    createdAt: '2024-11-01',
+    isWatched: false,
+    linkedAlerts: 0,
+    linkedToInventory: false
+  },
+  {
+    id: 'S005',
+    name: 'SUV Premium 2021-2024',
+    make: 'Alle',
+    yearFrom: 2021,
+    yearTo: 2024,
+    count: 2340,
+    avgPrice: 52400,
+    priceChange7d: 1.2,
+    courantheid: 85,
+    courantheidTrend: 'up',
+    filters: {
+      make: 'Alle',
+      yearFrom: 2021,
+      yearTo: 2024,
+      mileageFrom: 0,
+      mileageTo: 60000,
+      powerFrom: 200,
+      powerTo: 400
+    },
+    avgConfidence: 88,
+    createdAt: '2024-12-10',
+    isWatched: true,
+    linkedAlerts: 1,
+    linkedToInventory: true
   }
 ];
 
 export const mockAlerts: Alert[] = [
   {
     id: 'A001',
-    type: 'price_drop',
+    type: 'segment',
     title: 'Grote prijsdaling Tesla Model 3',
-    description: '€2.400 prijsverlaging gedetecteerd bij EV Specialists Eindhoven',
+    description: 'Segmentprijs -3.2% afgelopen 7 dagen. Markt krimpt sneller dan verwacht.',
     severity: 'warning',
     timestamp: '2025-01-11T09:23:00',
-    isRead: false
+    isRead: false,
+    segmentId: 'S003',
+    segmentName: 'Tesla Model 3 2020-2023'
   },
   {
     id: 'A002',
-    type: 'segment_change',
-    title: 'Segment VW Golf daalt',
-    description: 'Gemiddelde prijs -1.8% afgelopen 7 dagen. Courantheid nog stabiel.',
+    type: 'segment',
+    title: 'Segment VW Golf stabiel',
+    description: 'Gemiddelde prijs -1.8% afgelopen 7 dagen. Courantheid nog stabiel op 87.',
     severity: 'info',
     timestamp: '2025-01-11T08:00:00',
-    isRead: false
+    isRead: false,
+    segmentId: 'S001',
+    segmentName: 'VW Golf 2020-2023'
   },
   {
     id: 'A003',
-    type: 'competitor',
+    type: 'dealer',
     title: 'Concurrent onderbieding',
     description: 'AutoVandaag Amsterdam biedt vergelijkbare Golf €1.200 lager aan',
     severity: 'critical',
     timestamp: '2025-01-10T16:45:00',
-    isRead: true
+    isRead: true,
+    dealerId: 'D001',
+    dealerName: 'AutoVandaag Amsterdam'
   },
   {
     id: 'A004',
-    type: 'inventory',
+    type: 'listing',
     title: 'Voorraad te lang online',
     description: '3 voertuigen staan >60 dagen online zonder prijswijziging',
     severity: 'warning',
@@ -391,11 +539,42 @@ export const mockAlerts: Alert[] = [
   },
   {
     id: 'A005',
-    type: 'new_listing',
+    type: 'listing',
     title: 'Nieuwe listing in watchlist',
     description: 'Audi A4 35 TFSI 2022 toegevoegd door Audi Centrum Den Haag',
     severity: 'info',
     timestamp: '2025-01-10T10:30:00',
+    isRead: true
+  },
+  {
+    id: 'A006',
+    type: 'segment',
+    title: 'Marktgroei SUV Premium',
+    description: 'SUV Premium segment groeit +1.2% deze week. 234 nieuwe listings.',
+    severity: 'info',
+    timestamp: '2025-01-09T14:00:00',
+    isRead: true,
+    segmentId: 'S005',
+    segmentName: 'SUV Premium 2021-2024'
+  },
+  {
+    id: 'A007',
+    type: 'dealer',
+    title: 'Voorraadverhoging concurrent',
+    description: 'Premium Cars Utrecht heeft 12 nieuwe listings toegevoegd (BMW 3 Serie)',
+    severity: 'warning',
+    timestamp: '2025-01-09T11:30:00',
+    isRead: true,
+    dealerId: 'D002',
+    dealerName: 'Premium Cars Utrecht'
+  },
+  {
+    id: 'A008',
+    type: 'listing',
+    title: 'Prijsdaling gedetecteerd',
+    description: 'Mercedes C 180 2019 bij Star Motors: €750 prijsverlaging',
+    severity: 'info',
+    timestamp: '2025-01-08T16:00:00',
     isRead: true
   }
 ];
@@ -478,3 +657,13 @@ export const portalDistributionData = [
   { portal: 'Gaspedaal', listings: 5670, percentage: 10.8 },
   { portal: 'Overig', listings: 2200, percentage: 4.2 },
 ];
+
+// Segment Confidence Data for DataQuality page
+export const segmentConfidenceData = mockSegments.map(segment => ({
+  id: segment.id,
+  name: segment.name,
+  avgConfidence: segment.avgConfidence,
+  count: segment.count,
+  lowConfidenceCount: Math.round(segment.count * (1 - segment.avgConfidence / 100) * 0.3),
+  trend: segment.courantheidTrend
+}));

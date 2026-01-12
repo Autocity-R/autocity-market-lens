@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { CourantheidBadge } from '@/components/shared/CourantheidBadge';
 import {
   TrendingDown,
   ExternalLink,
@@ -65,7 +66,7 @@ export function ListingTable() {
               <th className="pb-3 text-left text-xs font-medium text-muted-foreground">Dealer</th>
               <th className="pb-3 text-center text-xs font-medium text-muted-foreground">Portal</th>
               <th className="pb-3 text-center text-xs font-medium text-muted-foreground">Dagen</th>
-              <th className="pb-3 text-center text-xs font-medium text-muted-foreground">Status</th>
+              <th className="pb-3 text-center text-xs font-medium text-muted-foreground">Courant</th>
               <th className="pb-3 text-center text-xs font-medium text-muted-foreground">AI</th>
               <th className="pb-3 w-10"></th>
             </tr>
@@ -127,17 +128,18 @@ export function ListingTable() {
                     </span>
                   </td>
                   <td className="py-3 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      {listing.isNormalized && (
-                        <Badge className="badge-normalized text-xs px-1.5">AI</Badge>
-                      )}
-                      {listing.isEnriched && (
-                        <Badge className="badge-enriched text-xs px-1.5">+</Badge>
-                      )}
-                    </div>
+                    <CourantheidBadge
+                      score={listing.courantheid}
+                      trend={listing.courantheidTrend}
+                      compact
+                    />
                   </td>
                   <td className="py-3 text-center">
                     <Badge className={cn('text-xs', getConfidenceBadge(listing.confidenceScore))}>
+                      {listing.confidenceScore}%
+                    </Badge>
+                  </td>
+                  <td className="py-3">
                       {listing.confidenceScore}%
                     </Badge>
                   </td>

@@ -9,6 +9,8 @@ import Valuation from "./pages/Valuation";
 import Dealers from "./pages/Dealers";
 import Inventory from "./pages/Inventory";
 import DataQuality from "./pages/DataQuality";
+import SegmentLibrary from "./pages/SegmentLibrary";
+import Alerts from "./pages/Alerts";
 import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
 
@@ -24,8 +26,10 @@ const App = () => (
           <Route path="/" element={<Dashboard />} />
           <Route path="/listings" element={<Listings />} />
           <Route path="/valuation" element={<Valuation />} />
+          <Route path="/segments" element={<SegmentLibrary />} />
           <Route path="/dealers" element={<Dealers />} />
           <Route path="/inventory" element={<Inventory />} />
+          <Route path="/alerts" element={<Alerts />} />
           <Route path="/quality" element={<DataQuality />} />
           <Route path="/admin" element={<Admin />} />
           <Route path="*" element={<NotFound />} />

@@ -1,10 +1,12 @@
+import { useState } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { mockDealers } from '@/lib/mockData';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
+import { Card, CardContent } from '@/components/ui/card';
+import { ComparisonContextSelector } from '@/components/dealers/ComparisonContextSelector';
+import { CourantheidBadge } from '@/components/shared/CourantheidBadge';
 import {
   Search,
   Building2,
@@ -18,6 +20,8 @@ import {
 import { cn } from '@/lib/utils';
 
 export default function Dealers() {
+  const [comparisonContext, setComparisonContext] = useState('market');
+
   const getPricingBadge = (strategy: string) => {
     switch (strategy) {
       case 'aggressive':
@@ -29,11 +33,18 @@ export default function Dealers() {
     }
   };
 
+  const marketAvgCourantheid = 84;
+
   return (
     <MainLayout
       title="Dealer Intelligence"
       subtitle="Analyse van dealernetwerk en voorraadstrategie"
     >
+      {/* Context Selector */}
+      <div className="mb-6">
+        <ComparisonContextSelector value={comparisonContext} onChange={setComparisonContext} />
+      </div>
+
       {/* Search */}
       <div className="stat-card mb-6">
         <div className="flex items-center gap-4">
@@ -89,11 +100,8 @@ export default function Dealers() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-2xl font-bold text-foreground">+1.2%</p>
-                <p className="text-sm text-muted-foreground">vs marktprijs</p>
-              </div>
-              <div className="text-right">
-                <TrendingUp className="h-5 w-5 text-warning inline" />
+                <CourantheidBadge score={marketAvgCourantheid} showLabel />
+                <p className="text-sm text-muted-foreground mt-1">Markt Courantheid</p>
               </div>
             </div>
           </CardContent>
@@ -104,6 +112,8 @@ export default function Dealers() {
       <div className="space-y-4">
         {mockDealers.map((dealer) => {
           const pricingBadge = getPricingBadge(dealer.pricingStrategy);
+          const courantheidVsMarket = dealer.avgCourantheid - marketAvgCourantheid;
+
           return (
             <Card key={dealer.id} className="bg-card border-border hover:border-primary/30 transition-all cursor-pointer">
               <CardContent className="p-6">
@@ -134,7 +144,7 @@ export default function Dealers() {
                   <ChevronRight className="h-5 w-5 text-muted-foreground" />
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-6 mt-6 pt-6 border-t border-border">
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-6 mt-6 pt-6 border-t border-border">
                   <div>
                     <p className="text-2xl font-bold text-foreground">{dealer.activeListings}</p>
                     <p className="text-xs text-muted-foreground">Actieve listings</p>
@@ -162,6 +172,14 @@ export default function Dealers() {
                       )}
                     </div>
                     <p className="text-xs text-muted-foreground">vs marktprijs</p>
+                  </div>
+                  <div>
+                    <CourantheidBadge score={dealer.avgCourantheid} compact />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      <span className={courantheidVsMarket >= 0 ? 'text-success' : 'text-destructive'}>
+                        {courantheidVsMarket >= 0 ? '+' : ''}{courantheidVsMarket}
+                      </span> vs markt
+                    </p>
                   </div>
                   <div>
                     <div className="flex items-center gap-1">
