@@ -13,6 +13,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { mockCrawlerJobs } from '@/lib/mockData';
+import { GaspedaalControlPanel } from '@/components/admin/GaspedaalControlPanel';
+import { ScraperJobHistory } from '@/components/admin/ScraperJobHistory';
 import {
   RefreshCw,
   CheckCircle2,
@@ -55,9 +57,17 @@ export default function Admin() {
       title="Admin & System"
       subtitle="Beheer scrapers, configuraties en systeeminstellingen"
     >
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Portal Configuration */}
-        <div className="lg:col-span-2">
+      <div className="space-y-6">
+        {/* Gaspedaal Control Panel - Primary Focus */}
+        <GaspedaalControlPanel />
+
+        {/* Gaspedaal Job History */}
+        <ScraperJobHistory source="gaspedaal" />
+
+        {/* Rest of Admin UI */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Portal Configuration */}
+          <div className="lg:col-span-2">
           <Card className="bg-card border-border">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-lg">
@@ -271,6 +281,7 @@ export default function Admin() {
               </div>
             </CardContent>
           </Card>
+          </div>
         </div>
       </div>
     </MainLayout>
