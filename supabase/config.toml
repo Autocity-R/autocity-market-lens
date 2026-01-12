@@ -1,1 +1,4 @@
 project_id = "tfhvproecsoembpkzffj"
+
+[functions.gaspedaal-discovery]
+verify_jwt = false

@@ -15,6 +15,7 @@ import {
 import { mockCrawlerJobs } from '@/lib/mockData';
 import { GaspedaalControlPanel } from '@/components/admin/GaspedaalControlPanel';
 import { ScraperJobHistory } from '@/components/admin/ScraperJobHistory';
+import { useDataSource } from '@/providers/DataSourceProvider';
 import {
   RefreshCw,
   CheckCircle2,
@@ -25,6 +26,8 @@ import {
   Pause,
   RotateCcw,
   AlertTriangle,
+  Database,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -37,6 +40,8 @@ const portals = [
 ];
 
 export default function Admin() {
+  const { dataSource, setDataSource } = useDataSource();
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'running':
@@ -58,6 +63,33 @@ export default function Admin() {
       subtitle="Beheer scrapers, configuraties en systeeminstellingen"
     >
       <div className="space-y-6">
+        {/* DataSource Toggle */}
+        <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 border border-border">
+          <Database className="h-4 w-4 text-primary" />
+          <span className="text-sm text-muted-foreground">Data Source:</span>
+          <div className="flex gap-1">
+            <Button 
+              variant={dataSource === 'mock' ? 'default' : 'outline'} 
+              size="sm"
+              onClick={() => setDataSource('mock')}
+            >
+              <Sparkles className="h-3 w-3 mr-1" />
+              Mock
+            </Button>
+            <Button 
+              variant={dataSource === 'db' ? 'default' : 'outline'} 
+              size="sm"
+              onClick={() => setDataSource('db')}
+            >
+              <Database className="h-3 w-3 mr-1" />
+              Database
+            </Button>
+          </div>
+          {dataSource === 'db' && (
+            <Badge variant="secondary" className="ml-2">Live Data</Badge>
+          )}
+        </div>
+
         {/* Gaspedaal Control Panel - Primary Focus */}
         <GaspedaalControlPanel />
 

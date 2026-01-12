@@ -46,7 +46,7 @@ export function ScraperJobHistory({ source }: ScraperJobHistoryProps) {
         return <CheckCircle2 className="h-4 w-4 text-success" />;
       case 'failed':
         return <XCircle className="h-4 w-4 text-destructive" />;
-      case 'paused':
+      case 'pending':
         return <Clock className="h-4 w-4 text-warning" />;
       default:
         return <Clock className="h-4 w-4 text-muted-foreground" />;
