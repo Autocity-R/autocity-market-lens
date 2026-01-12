@@ -140,10 +140,6 @@ export function ListingTable() {
                     </Badge>
                   </td>
                   <td className="py-3">
-                      {listing.confidenceScore}%
-                    </Badge>
-                  </td>
-                  <td className="py-3">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="icon" className="h-8 w-8">
