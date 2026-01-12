@@ -13,7 +13,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
-  Search
+  Search,
+  Layers
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
@@ -28,8 +29,10 @@ const mainNavItems: NavItem[] = [
   { title: 'Dashboard', href: '/', icon: LayoutDashboard },
   { title: 'Markt Listings', href: '/listings', icon: Car },
   { title: 'Taxatie', href: '/valuation', icon: Calculator },
+  { title: 'Segment Library', href: '/segments', icon: Layers },
   { title: 'Dealer Intelligence', href: '/dealers', icon: Building2 },
   { title: 'Inventory Monitor', href: '/inventory', icon: TrendingUp },
+  { title: 'Alerts & Watchlists', href: '/alerts', icon: Bell, badge: 3 },
 ];
 
 const systemNavItems: NavItem[] = [

@@ -3,6 +3,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { SegmentConfidenceCard } from '@/components/quality/SegmentConfidenceCard';
+import { segmentConfidenceData } from '@/lib/mockData';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -132,7 +134,7 @@ export default function DataQuality() {
         </Card>
       </div>
 
-      {/* Confidence Distribution */}
+      {/* Confidence Distribution + Segment Confidence */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
         <Card className="bg-card border-border lg:col-span-1">
           <CardHeader>
@@ -169,68 +171,73 @@ export default function DataQuality() {
           </CardContent>
         </Card>
 
-        {/* Issues List */}
-        <Card className="bg-card border-border lg:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg">Datakwaliteit Issues</CardTitle>
-            <div className="flex gap-2">
-              <Badge variant="outline" className="cursor-pointer hover:bg-muted">Alle</Badge>
-              <Badge variant="outline" className="cursor-pointer hover:bg-muted">Laag confidence</Badge>
-              <Badge variant="outline" className="cursor-pointer hover:bg-muted">Anomalieën</Badge>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {qualityIssues.map((issue) => (
-                <div
-                  key={issue.id}
-                  className={cn(
-                    'flex items-center justify-between p-4 rounded-lg border-l-2',
-                    issue.severity === 'critical' ? 'border-l-destructive bg-destructive/5' :
-                    issue.severity === 'warning' ? 'border-l-warning bg-warning/5' :
-                    'border-l-info bg-info/5'
-                  )}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className={cn(
-                      'h-8 w-8 rounded-full flex items-center justify-center',
-                      issue.severity === 'critical' ? 'bg-destructive/20' :
-                      issue.severity === 'warning' ? 'bg-warning/20' : 'bg-info/20'
-                    )}>
-                      {issue.severity === 'critical' ? (
-                        <XCircle className="h-4 w-4 text-destructive" />
-                      ) : issue.severity === 'warning' ? (
-                        <AlertTriangle className="h-4 w-4 text-warning" />
-                      ) : (
-                        <Eye className="h-4 w-4 text-info" />
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{issue.listing}</p>
-                      <p className="text-xs text-muted-foreground">{issue.issue}</p>
-                      <p className="text-xs text-muted-foreground/70 mt-1">{issue.details}</p>
-                    </div>
+        {/* Segment Confidence Card */}
+        <div className="lg:col-span-2">
+          <SegmentConfidenceCard segments={segmentConfidenceData} />
+        </div>
+      </div>
+
+      {/* Issues List */}
+      <Card className="bg-card border-border">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="text-lg">Datakwaliteit Issues</CardTitle>
+          <div className="flex gap-2">
+            <Badge variant="outline" className="cursor-pointer hover:bg-muted">Alle</Badge>
+            <Badge variant="outline" className="cursor-pointer hover:bg-muted">Laag confidence</Badge>
+            <Badge variant="outline" className="cursor-pointer hover:bg-muted">Anomalieën</Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {qualityIssues.map((issue) => (
+              <div
+                key={issue.id}
+                className={cn(
+                  'flex items-center justify-between p-4 rounded-lg border-l-2',
+                  issue.severity === 'critical' ? 'border-l-destructive bg-destructive/5' :
+                  issue.severity === 'warning' ? 'border-l-warning bg-warning/5' :
+                  'border-l-info bg-info/5'
+                )}
+              >
+                <div className="flex items-center gap-4">
+                  <div className={cn(
+                    'h-8 w-8 rounded-full flex items-center justify-center',
+                    issue.severity === 'critical' ? 'bg-destructive/20' :
+                    issue.severity === 'warning' ? 'bg-warning/20' : 'bg-info/20'
+                  )}>
+                    {issue.severity === 'critical' ? (
+                      <XCircle className="h-4 w-4 text-destructive" />
+                    ) : issue.severity === 'warning' ? (
+                      <AlertTriangle className="h-4 w-4 text-warning" />
+                    ) : (
+                      <Eye className="h-4 w-4 text-info" />
+                    )}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Button variant="ghost" size="sm">
-                      <Eye className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="sm">
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                  <div>
+                    <p className="text-sm font-medium text-foreground">{issue.listing}</p>
+                    <p className="text-xs text-muted-foreground">{issue.issue}</p>
+                    <p className="text-xs text-muted-foreground/70 mt-1">{issue.details}</p>
                   </div>
                 </div>
-              ))}
-            </div>
-            <Button variant="outline" className="w-full mt-4">
-              Bekijk alle {qualityStats.issues} issues
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm">
+                    <Eye className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="sm">
+                    <Edit className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive">
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <Button variant="outline" className="w-full mt-4">
+            Bekijk alle {qualityStats.issues} issues
+          </Button>
+        </CardContent>
+      </Card>
     </MainLayout>
   );
 }
