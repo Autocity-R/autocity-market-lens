@@ -121,11 +121,13 @@ export type Database = {
           previous_price: number | null
           price: number | null
           raw_listing_id: string | null
+          sitemap_lastmod: string | null
           source: string
           status: string
           title: string
           transmission: string | null
           url: string
+          vehicle_fingerprint: string | null
           year: number | null
         }
         Insert: {
@@ -148,11 +150,13 @@ export type Database = {
           previous_price?: number | null
           price?: number | null
           raw_listing_id?: string | null
+          sitemap_lastmod?: string | null
           source: string
           status?: string
           title: string
           transmission?: string | null
           url: string
+          vehicle_fingerprint?: string | null
           year?: number | null
         }
         Update: {
@@ -175,11 +179,13 @@ export type Database = {
           previous_price?: number | null
           price?: number | null
           raw_listing_id?: string | null
+          sitemap_lastmod?: string | null
           source?: string
           status?: string
           title?: string
           transmission?: string | null
           url?: string
+          vehicle_fingerprint?: string | null
           year?: number | null
         }
         Relationships: [
