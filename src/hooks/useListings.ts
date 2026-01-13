@@ -31,6 +31,8 @@ function transformMockListing(listing: typeof mockListings[0]): ScraperListing {
     normalizationConfidence: listing.confidenceScore,
     courantheidScore: listing.courantheid,
     courantheidTrend: listing.courantheidTrend,
+    vehicleFingerprint: null,
+    sitemapLastmod: null,
   };
 }
 
@@ -59,6 +61,8 @@ function transformDBListing(row: {
   normalization_confidence: number | null;
   courantheid_score: number | null;
   courantheid_trend: string | null;
+  vehicle_fingerprint: string | null;
+  sitemap_lastmod: string | null;
 }): ScraperListing {
   const firstSeenDate = new Date(row.first_seen_at);
   const daysOnMarket = Math.floor((Date.now() - firstSeenDate.getTime()) / (1000 * 60 * 60 * 24));
@@ -88,6 +92,8 @@ function transformDBListing(row: {
     normalizationConfidence: row.normalization_confidence,
     courantheidScore: row.courantheid_score,
     courantheidTrend: row.courantheid_trend as 'up' | 'down' | 'stable' | null,
+    vehicleFingerprint: row.vehicle_fingerprint,
+    sitemapLastmod: row.sitemap_lastmod,
   };
 }
 

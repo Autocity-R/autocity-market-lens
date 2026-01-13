@@ -65,6 +65,10 @@ export interface ScraperListing {
   // Courantheid
   courantheidScore: number | null;
   courantheidTrend: 'up' | 'down' | 'stable' | null;
+
+  // Sitemap/Discovery tracking
+  vehicleFingerprint: string | null;
+  sitemapLastmod: string | null;
 }
 
 // ===== LISTING SNAPSHOT =====
