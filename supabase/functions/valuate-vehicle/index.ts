@@ -7,6 +7,7 @@ const corsHeaders = {
 };
 
 interface ValuationRequest {
+  licensePlate?: string;
   make: string;
   model: string;
   year: number;
@@ -14,8 +15,11 @@ interface ValuationRequest {
   fuelType: string;
   transmission?: string;
   bodyType?: string;
+  power?: {
+    kw?: number;
+    hp?: number;
+  };
   options?: string[];
-  condition?: 'excellent' | 'good' | 'fair' | 'poor';
 }
 
 interface Comparable {
@@ -197,18 +201,17 @@ serve(async (req) => {
       marketInsight = generateBasicInsight(request, { avgPrice, median, sampleSize: allPrices.length, avgDaysOnMarket });
     }
 
-    // Apply condition adjustment
-    const conditionMultiplier = getConditionMultiplier(request.condition);
+    // Calculate final value (no condition adjustment)
     const baseValue = median;
-    const adjustedValue = Math.round((baseValue + optionsAdjustment) * conditionMultiplier);
+    const adjustedValue = Math.round(baseValue + optionsAdjustment);
 
     const result: ValuationResult = {
       estimatedValue: adjustedValue,
       confidence,
       priceRange: {
-        low: Math.round(p10 * conditionMultiplier),
+        low: p10,
         mid: adjustedValue,
-        high: Math.round(p90 * conditionMultiplier),
+        high: p90,
       },
       comparables: comparables.slice(0, 10),
       marketInsight,
@@ -238,30 +241,15 @@ serve(async (req) => {
 });
 
 function calculateConfidence(totalSamples: number, soldSamples: number): number {
-  // Base confidence from total samples (max 60 points)
   const sampleScore = Math.min(totalSamples / 50, 1) * 60;
-  
-  // Sold samples are more valuable (max 40 points)
   const soldScore = Math.min(soldSamples / 20, 1) * 40;
-  
   return Math.round(sampleScore + soldScore);
-}
-
-function getConditionMultiplier(condition?: string): number {
-  switch (condition) {
-    case 'excellent': return 1.05;
-    case 'good': return 1.0;
-    case 'fair': return 0.92;
-    case 'poor': return 0.82;
-    default: return 1.0;
-  }
 }
 
 function generateBasicInsight(
   request: ValuationRequest,
   stats: { avgPrice: number; median: number; sampleSize: number; avgDaysOnMarket: number }
 ): string {
-  const yearAge = new Date().getFullYear() - request.year;
   const kmCategory = request.mileage < 50000 ? 'lage' : request.mileage < 100000 ? 'gemiddelde' : 'hoge';
   
   return `Deze ${request.year} ${request.make} ${request.model} met ${kmCategory} kilometerstand ` +
@@ -281,8 +269,8 @@ Voertuig:
 - Kilometerstand: ${request.mileage.toLocaleString()} km
 - Brandstof: ${request.fuelType}
 - Transmissie: ${request.transmission || 'onbekend'}
+- Vermogen: ${request.power?.hp ? `${request.power.hp} PK` : 'onbekend'}
 - Opties: ${request.options?.join(', ') || 'geen specifieke opties'}
-- Conditie: ${request.condition || 'onbekend'}
 
 Marktdata:
 - Aantal vergelijkbare voertuigen: ${stats.sampleSize}
