@@ -14,12 +14,13 @@ import { cn } from '@/lib/utils';
 
 interface OptionsSelectorProps {
   make: string;
+  fuelType?: string;
   selectedOptions: string[];
   onOptionsChange: (options: string[]) => void;
 }
 
-export function OptionsSelector({ make, selectedOptions, onOptionsChange }: OptionsSelectorProps) {
-  const { data: optionsData, isLoading } = useVehicleOptions(make);
+export function OptionsSelector({ make, fuelType, selectedOptions, onOptionsChange }: OptionsSelectorProps) {
+  const { data: optionsData, isLoading } = useVehicleOptions(make, fuelType);
   const [openCategories, setOpenCategories] = useState<string[]>(['performance']);
 
   const toggleCategory = (category: string) => {

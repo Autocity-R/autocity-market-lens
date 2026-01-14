@@ -101,116 +101,209 @@ const BODY_TYPES = [
   'Bedrijfswagen',
 ];
 
-// Valuable options database - organized by category
-const OPTIONS_DATABASE = {
+// Valuable options database - organized by category with brand and fuel filtering
+interface OptionItem {
+  value: string;
+  label: string;
+  makes: string[];
+}
+
+interface OptionsCategory {
+  label: string;
+  fuels?: string[]; // If specified, only show for these fuel types
+  options: OptionItem[];
+}
+
+const OPTIONS_DATABASE: Record<string, OptionsCategory> = {
+  // MERK-SPECIFIEKE PERFORMANCE OPTIES
   performance: {
     label: 'Performance & Sport',
     options: [
-      { value: 'amg_line', label: 'AMG Line', brands: ['Mercedes-Benz'] },
-      { value: 'amg_pakket', label: 'AMG Pakket', brands: ['Mercedes-Benz'] },
-      { value: 'm_sport', label: 'M Sport', brands: ['BMW'] },
-      { value: 'm_pakket', label: 'M Pakket', brands: ['BMW'] },
-      { value: 's_line', label: 'S Line', brands: ['Audi'] },
-      { value: 'rs_line', label: 'RS Line', brands: ['Audi', 'Renault'] },
-      { value: 'st_line', label: 'ST Line', brands: ['Ford'] },
-      { value: 'r_line', label: 'R Line', brands: ['Volkswagen'] },
-      { value: 'gti', label: 'GTI', brands: ['Volkswagen'] },
-      { value: 'gtd', label: 'GTD', brands: ['Volkswagen'] },
-      { value: 'gte', label: 'GTE', brands: ['Volkswagen'] },
-      { value: 'r_design', label: 'R-Design', brands: ['Volvo'] },
-      { value: 'fr', label: 'FR', brands: ['Seat', 'Cupra'] },
-      { value: 'n_line', label: 'N Line', brands: ['Hyundai'] },
-      { value: 'type_r', label: 'Type R', brands: ['Honda'] },
-      { value: 'nismo', label: 'Nismo', brands: ['Nissan'] },
-      { value: 'sport', label: 'Sport pakket', brands: [] },
-      { value: 'sportonderstel', label: 'Sportonderstel', brands: [] },
-      { value: 'sportuitlaat', label: 'Sportuitlaat', brands: [] },
+      // Mercedes exclusief
+      { value: 'amg_line', label: 'AMG Line', makes: ['Mercedes-Benz'] },
+      { value: 'amg_pakket', label: 'AMG Pakket', makes: ['Mercedes-Benz'] },
+      { value: 'amg_night_pakket', label: 'AMG Night Pakket', makes: ['Mercedes-Benz'] },
+      
+      // BMW exclusief
+      { value: 'm_sport', label: 'M Sport', makes: ['BMW'] },
+      { value: 'm_pakket', label: 'M Pakket', makes: ['BMW'] },
+      { value: 'm_performance', label: 'M Performance', makes: ['BMW'] },
+      
+      // Audi exclusief
+      { value: 's_line', label: 'S Line', makes: ['Audi'] },
+      { value: 'black_edition_audi', label: 'Black Edition', makes: ['Audi'] },
+      { value: 'rs_line', label: 'RS Line', makes: ['Audi', 'Renault'] },
+      
+      // Ford exclusief
+      { value: 'st_line', label: 'ST-Line', makes: ['Ford'] },
+      { value: 'vignale', label: 'Vignale', makes: ['Ford'] },
+      
+      // Volkswagen exclusief
+      { value: 'r_line', label: 'R-Line', makes: ['Volkswagen'] },
+      { value: 'gti', label: 'GTI', makes: ['Volkswagen'] },
+      { value: 'gtd', label: 'GTD', makes: ['Volkswagen'] },
+      { value: 'gte', label: 'GTE', makes: ['Volkswagen'] },
+      
+      // Volvo exclusief
+      { value: 'r_design', label: 'R-Design', makes: ['Volvo'] },
+      { value: 'polestar_engineered', label: 'Polestar Engineered', makes: ['Volvo'] },
+      
+      // Seat/Cupra
+      { value: 'fr', label: 'FR', makes: ['Seat', 'Cupra'] },
+      { value: 'cupra_uitvoering', label: 'Cupra uitvoering', makes: ['Seat'] },
+      
+      // Hyundai/Kia
+      { value: 'n_line', label: 'N Line', makes: ['Hyundai'] },
+      { value: 'gt_line', label: 'GT-Line', makes: ['Kia'] },
+      
+      // Renault/Peugeot/Opel
+      { value: 'rs_line_renault', label: 'R.S. Line', makes: ['Renault'] },
+      { value: 'gt_peugeot', label: 'GT', makes: ['Peugeot'] },
+      { value: 'gs_line', label: 'GS Line', makes: ['Opel'] },
+      
+      // Honda/Nissan
+      { value: 'type_r', label: 'Type R', makes: ['Honda'] },
+      { value: 'nismo', label: 'Nismo', makes: ['Nissan'] },
+      
+      // Generiek (voor alle merken)
+      { value: 'sportonderstel', label: 'Sportonderstel', makes: [] },
+      { value: 'sportuitlaat', label: 'Sportuitlaat', makes: [] },
     ],
   },
+  
+  // BRANDSTOF-SPECIFIEKE OPTIES - ELEKTRISCH
+  electric: {
+    label: 'Elektrisch',
+    fuels: ['Elektrisch', 'Plug-in Hybride'],
+    options: [
+      { value: 'warmtepomp', label: 'Warmtepomp', makes: [] },
+      { value: 'fast_charging', label: 'Snelladen (DC)', makes: [] },
+      { value: 'grote_batterij', label: 'Grote batterij upgrade', makes: [] },
+      { value: 'enhanced_autopilot', label: 'Enhanced Autopilot', makes: ['Tesla'] },
+      { value: 'fsd', label: 'Full Self-Driving', makes: ['Tesla'] },
+      { value: 'pilot_pack', label: 'Pilot Pack', makes: ['Polestar'] },
+      { value: 'plus_pack', label: 'Plus Pack', makes: ['Polestar'] },
+      { value: 'v2l', label: 'Vehicle-to-Load (V2L)', makes: ['Hyundai', 'Kia', 'Genesis'] },
+      { value: 'premium_connect', label: 'Premium Connectivity', makes: ['Tesla'] },
+      { value: 'bi_directional', label: 'Bi-directioneel laden', makes: [] },
+    ],
+  },
+  
+  // AUDIO - MERK SPECIFIEK
+  audio: {
+    label: 'Audio Systemen',
+    options: [
+      { value: 'burmester', label: 'Burmester', makes: ['Mercedes-Benz'] },
+      { value: 'harman_kardon', label: 'Harman Kardon', makes: ['BMW', 'Mini', 'Volvo', 'Subaru'] },
+      { value: 'bang_olufsen', label: 'Bang & Olufsen', makes: ['Audi', 'Ford'] },
+      { value: 'bose', label: 'Bose', makes: ['Mazda', 'Porsche', 'Nissan', 'Infiniti', 'Renault'] },
+      { value: 'meridian', label: 'Meridian', makes: ['Land Rover', 'Jaguar'] },
+      { value: 'mark_levinson', label: 'Mark Levinson', makes: ['Lexus'] },
+      { value: 'jbl', label: 'JBL', makes: ['Toyota'] },
+      { value: 'focal', label: 'Focal', makes: ['Peugeot', 'DS', 'Citroën'] },
+      { value: 'dynaudio', label: 'Dynaudio', makes: ['Volkswagen'] },
+      { value: 'naim', label: 'Naim', makes: ['Bentley'] },
+      { value: 'beosonic', label: 'BeoSonic', makes: ['Aston Martin'] },
+    ],
+  },
+  
+  // PREMIUM KLEUREN - MERK SPECIFIEK  
+  colors: {
+    label: 'Premium Kleuren',
+    options: [
+      { value: 'designo', label: 'Designo', makes: ['Mercedes-Benz'] },
+      { value: 'individual', label: 'BMW Individual', makes: ['BMW'] },
+      { value: 'audi_exclusive', label: 'Audi Exclusive', makes: ['Audi'] },
+      { value: 'pts', label: 'Paint to Sample', makes: ['Porsche'] },
+      { value: 'special_paint', label: 'Speciale lak', makes: [] },
+      { value: 'matte_paint', label: 'Mat lak', makes: [] },
+    ],
+  },
+  
+  // COMFORT - GROTENDEELS GENERIEK
   comfort: {
     label: 'Comfort & Interieur',
     options: [
-      { value: 'panoramadak', label: 'Panoramadak', brands: [] },
-      { value: 'schuifdak', label: 'Schuifdak', brands: [] },
-      { value: 'leder', label: 'Leder interieur', brands: [] },
-      { value: 'alcantara', label: 'Alcantara interieur', brands: [] },
-      { value: 'stoelverwarming', label: 'Stoelverwarming', brands: [] },
-      { value: 'stoelventilatie', label: 'Stoelventilatie', brands: [] },
-      { value: 'massagestoelen', label: 'Massage stoelen', brands: [] },
-      { value: 'elektrische_stoelen', label: 'Elektrisch verstelbare stoelen', brands: [] },
-      { value: 'geheugen_stoelen', label: 'Geheugen stoelen', brands: [] },
-      { value: 'stuurverwarming', label: 'Stuurverwarming', brands: [] },
-      { value: 'keyless', label: 'Keyless entry & start', brands: [] },
-      { value: 'elektrische_achterklep', label: 'Elektrische achterklep', brands: [] },
-      { value: 'soft_close', label: 'Soft-close deuren', brands: [] },
-      { value: 'ambient_light', label: 'Ambient verlichting', brands: [] },
+      { value: 'panoramadak', label: 'Panoramadak', makes: [] },
+      { value: 'schuifdak', label: 'Schuifdak', makes: [] },
+      { value: 'leder', label: 'Leder interieur', makes: [] },
+      { value: 'nappa_leder', label: 'Nappa leder', makes: [] },
+      { value: 'alcantara', label: 'Alcantara', makes: [] },
+      { value: 'designo_leder', label: 'Designo leder', makes: ['Mercedes-Benz'] },
+      { value: 'merino_leder', label: 'Merino leder', makes: ['BMW'] },
+      { value: 'valcona_leder', label: 'Valcona leder', makes: ['Audi'] },
+      { value: 'stoelverwarming', label: 'Stoelverwarming', makes: [] },
+      { value: 'stoelkoeling', label: 'Stoelkoeling', makes: [] },
+      { value: 'massagestoelen', label: 'Massagestoelen', makes: [] },
+      { value: 'elektrische_stoelen', label: 'Elektrische stoelen', makes: [] },
+      { value: 'geheugen_stoelen', label: 'Geheugen stoelen', makes: [] },
+      { value: 'stuurverwarming', label: 'Stuurverwarming', makes: [] },
+      { value: 'head_up_display', label: 'Head-up display', makes: [] },
+      { value: 'ambient_verlichting', label: 'Ambient verlichting', makes: [] },
+      { value: 'keyless', label: 'Keyless entry & start', makes: [] },
+      { value: 'elektrische_achterklep', label: 'Elektrische achterklep', makes: [] },
+      { value: 'soft_close', label: 'Soft-close deuren', makes: [] },
     ],
   },
+  
+  // TECHNOLOGIE
   technology: {
-    label: 'Technologie & Audio',
+    label: 'Technologie',
     options: [
-      { value: 'matrix_led', label: 'Matrix LED koplampen', brands: [] },
-      { value: 'laser', label: 'Laser koplampen', brands: ['BMW', 'Audi'] },
-      { value: 'hud', label: 'Head-up display', brands: [] },
-      { value: 'digitaal_dashboard', label: 'Digitaal dashboard', brands: [] },
-      { value: 'groot_navigatie', label: 'Groot navigatiescherm', brands: [] },
-      { value: 'harman_kardon', label: 'Harman Kardon audio', brands: [] },
-      { value: 'bose', label: 'Bose audio', brands: [] },
-      { value: 'bang_olufsen', label: 'Bang & Olufsen audio', brands: ['Audi'] },
-      { value: 'burmester', label: 'Burmester audio', brands: ['Mercedes-Benz'] },
-      { value: 'meridian', label: 'Meridian audio', brands: ['Land Rover', 'Jaguar'] },
-      { value: 'naim', label: 'Naim audio', brands: ['Bentley'] },
-      { value: 'apple_carplay', label: 'Apple CarPlay', brands: [] },
-      { value: 'android_auto', label: 'Android Auto', brands: [] },
-      { value: 'draadloos_laden', label: 'Draadloos telefoon laden', brands: [] },
+      { value: 'matrix_led', label: 'Matrix LED', makes: [] },
+      { value: 'laser_koplampen', label: 'Laser koplampen', makes: ['BMW', 'Audi'] },
+      { value: 'digitaal_dashboard', label: 'Digitaal dashboard', makes: [] },
+      { value: 'groot_navigatie', label: 'Groot navigatiescherm', makes: [] },
+      { value: 'apple_carplay', label: 'Apple CarPlay', makes: [] },
+      { value: 'android_auto', label: 'Android Auto', makes: [] },
+      { value: 'draadloos_laden', label: 'Draadloos telefoon laden', makes: [] },
     ],
   },
+  
+  // VEILIGHEID & RIJHULPSYSTEMEN
   safety: {
     label: 'Veiligheid & Rijhulp',
     options: [
-      { value: 'acc', label: 'Adaptive cruise control', brands: [] },
-      { value: 'lane_assist', label: 'Lane assist', brands: [] },
-      { value: 'dodehoek', label: 'Dodehoek detectie', brands: [] },
-      { value: 'nightvision', label: 'Nightvision', brands: [] },
-      { value: 'camera_360', label: '360° camera', brands: [] },
-      { value: 'achteruitrijcamera', label: 'Achteruitrijcamera', brands: [] },
-      { value: 'park_assist', label: 'Park assist', brands: [] },
-      { value: 'auto_parkeren', label: 'Automatisch parkeren', brands: [] },
-      { value: 'verkeersbord', label: 'Verkeersbordherkenning', brands: [] },
-      { value: 'noodrem', label: 'Automatische noodrem', brands: [] },
-      { value: 'driver_assist', label: 'Driver assist pakket', brands: [] },
+      { value: 'acc', label: 'Adaptive cruise control', makes: [] },
+      { value: 'lane_assist', label: 'Lane assist', makes: [] },
+      { value: 'dodehoek', label: 'Dodehoek detectie', makes: [] },
+      { value: 'camera_360', label: '360 graden camera', makes: [] },
+      { value: 'nightvision', label: 'Nightvision', makes: [] },
+      { value: 'park_assist', label: 'Park assist', makes: [] },
+      { value: 'achteruitrijcamera', label: 'Achteruitrijcamera', makes: [] },
+      { value: 'driving_assistant_pro', label: 'Driving Assistant Pro', makes: ['BMW'] },
+      { value: 'intellisafe', label: 'IntelliSafe', makes: ['Volvo'] },
+      { value: 'eyesight', label: 'EyeSight', makes: ['Subaru'] },
     ],
   },
+  
+  // EXTERIEUR
   exterior: {
-    label: 'Exterieur & Wielen',
+    label: 'Exterieur',
     options: [
-      { value: '18_inch', label: '18 inch velgen', brands: [] },
-      { value: '19_inch', label: '19 inch velgen', brands: [] },
-      { value: '20_inch', label: '20 inch velgen', brands: [] },
-      { value: '21_inch', label: '21 inch velgen', brands: [] },
-      { value: '22_inch', label: '22 inch velgen', brands: [] },
-      { value: 'luchtvering', label: 'Luchtvering', brands: [] },
-      { value: 'adaptief_onderstel', label: 'Adaptief onderstel', brands: [] },
-      { value: 'trekhaak', label: 'Trekhaak', brands: [] },
-      { value: 'privacy_glas', label: 'Privacy glas', brands: [] },
-      { value: 'metallic', label: 'Metallic lak', brands: [] },
-      { value: 'individual', label: 'Individual kleur', brands: ['BMW'] },
-      { value: 'designo', label: 'Designo kleur', brands: ['Mercedes-Benz'] },
-      { value: 'audi_exclusive', label: 'Audi Exclusive', brands: ['Audi'] },
+      { value: '19_inch', label: '19 inch velgen', makes: [] },
+      { value: '20_inch', label: '20 inch velgen', makes: [] },
+      { value: '21_inch', label: '21 inch velgen', makes: [] },
+      { value: '22_inch', label: '22 inch velgen', makes: [] },
+      { value: 'luchtvering', label: 'Luchtvering', makes: [] },
+      { value: 'adaptief_onderstel', label: 'Adaptief onderstel', makes: [] },
+      { value: 'trekhaak', label: 'Trekhaak', makes: [] },
+      { value: 'privacy_glas', label: 'Privacy glas', makes: [] },
     ],
   },
+  
+  // PAKKETTEN - MERK SPECIFIEK
   packages: {
     label: 'Pakketten',
     options: [
-      { value: 'winterpakket', label: 'Winterpakket', brands: [] },
-      { value: 'business', label: 'Business pakket', brands: [] },
-      { value: 'comfort_pakket', label: 'Comfort pakket', brands: [] },
-      { value: 'launch_edition', label: 'Launch Edition', brands: [] },
-      { value: 'first_edition', label: 'First Edition', brands: [] },
-      { value: 'black_edition', label: 'Black Edition', brands: [] },
-      { value: 'night_pakket', label: 'Night pakket', brands: [] },
-      { value: 'premium', label: 'Premium pakket', brands: [] },
-      { value: 'premium_plus', label: 'Premium Plus pakket', brands: [] },
+      { value: 'winterpakket', label: 'Winterpakket', makes: [] },
+      { value: 'business_plus', label: 'Business+', makes: ['Mercedes-Benz'] },
+      { value: 'luxury_line', label: 'Luxury Line', makes: ['BMW'] },
+      { value: 'launch_edition', label: 'Launch Edition', makes: [] },
+      { value: 'first_edition', label: 'First Edition', makes: [] },
+      { value: 'night_pakket', label: 'Night pakket', makes: [] },
+      { value: 'black_edition', label: 'Black Edition', makes: [] },
+      { value: 'premium_pakket', label: 'Premium pakket', makes: [] },
     ],
   },
 };
@@ -283,20 +376,28 @@ serve(async (req) => {
         break;
         
       case 'options':
-        // Return options filtered by make if provided
+        // Return options filtered by make AND fuelType
         const filteredOptions: Record<string, any> = {};
         const make = filters?.make;
+        const fuelType = filters?.fuelType;
         
         for (const [category, data] of Object.entries(OPTIONS_DATABASE)) {
-          const categoryData = data as { label: string; options: Array<{ value: string; label: string; brands: string[] }> };
-          const filteredCategoryOptions = categoryData.options.filter(opt => {
-            // Include if no brands specified (universal) or if brand matches
-            return opt.brands.length === 0 || (make && opt.brands.includes(make));
+          // Check fuel type category filter (e.g., electric options only for EV/PHEV)
+          if (data.fuels && data.fuels.length > 0) {
+            if (!fuelType || !data.fuels.includes(fuelType)) {
+              continue; // Skip this category if fuel doesn't match
+            }
+          }
+          
+          // Filter options by make
+          const filteredCategoryOptions = data.options.filter(opt => {
+            // Include if no makes specified (universal) or if make matches
+            return opt.makes.length === 0 || (make && opt.makes.includes(make));
           });
           
           if (filteredCategoryOptions.length > 0) {
             filteredOptions[category] = {
-              label: categoryData.label,
+              label: data.label,
               options: filteredCategoryOptions,
             };
           }
