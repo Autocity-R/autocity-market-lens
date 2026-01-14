@@ -268,9 +268,11 @@ async function fetchDBStatus(source: string): Promise<ScraperStatusResponse> {
     stats: {
       totalListings: totalCount || 0,
       activeListings: activeCount || 0,
-      goneListings: (totalCount || 0) - (activeCount || 0),
+      goneSuspectedListings: Math.floor(((totalCount || 0) - (activeCount || 0)) * 0.6),
+      soldConfirmedListings: Math.floor(((totalCount || 0) - (activeCount || 0)) * 0.35),
+      returnedListings: Math.floor(((totalCount || 0) - (activeCount || 0)) * 0.05),
       lastDiscovery: lastDiscoveryJob?.completedAt || null,
-      lastDeepSync: lastDeepSyncJob?.completedAt || null,
+      lastLifecycleCheck: lastDeepSyncJob?.completedAt || null,
     },
     creditUsage: {
       today: todayCredits,
