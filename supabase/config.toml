@@ -2,3 +2,12 @@ project_id = "tfhvproecsoembpkzffj"
 
 [functions.gaspedaal-discovery]
 verify_jwt = false
+
+[functions.calculate-courantheid]
+verify_jwt = false
+
+[functions.valuate-vehicle]
+verify_jwt = false
+
+[functions.analyze-dealer]
+verify_jwt = false

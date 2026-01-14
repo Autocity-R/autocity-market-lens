@@ -14,6 +14,62 @@ export type Database = {
   }
   public: {
     Tables: {
+      dealer_stats: {
+        Row: {
+          avg_days_on_market: number | null
+          avg_price: number | null
+          created_at: string | null
+          dealer_id: string | null
+          id: string
+          listings_count: number | null
+          period_end: string
+          period_start: string
+          price_strategy: string | null
+          sold_count: number | null
+          top_makes: Json | null
+          top_models: Json | null
+          total_revenue: number | null
+        }
+        Insert: {
+          avg_days_on_market?: number | null
+          avg_price?: number | null
+          created_at?: string | null
+          dealer_id?: string | null
+          id?: string
+          listings_count?: number | null
+          period_end: string
+          period_start: string
+          price_strategy?: string | null
+          sold_count?: number | null
+          top_makes?: Json | null
+          top_models?: Json | null
+          total_revenue?: number | null
+        }
+        Update: {
+          avg_days_on_market?: number | null
+          avg_price?: number | null
+          created_at?: string | null
+          dealer_id?: string | null
+          id?: string
+          listings_count?: number | null
+          period_end?: string
+          period_start?: string
+          price_strategy?: string | null
+          sold_count?: number | null
+          top_makes?: Json | null
+          top_models?: Json | null
+          total_revenue?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dealer_stats_dealer_id_fkey"
+            columns: ["dealer_id"]
+            isOneToOne: false
+            referencedRelation: "dealers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       dealers: {
         Row: {
           active_listings_count: number | null
@@ -240,6 +296,54 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      market_segments: {
+        Row: {
+          avg_days_on_market: number | null
+          avg_price: number | null
+          courantheid_score: number | null
+          created_at: string | null
+          filters: Json
+          id: string
+          last_calculated_at: string | null
+          median_price: number | null
+          name: string
+          sales_last_30_days: number | null
+          trend: string | null
+          updated_at: string | null
+          window_size: number | null
+        }
+        Insert: {
+          avg_days_on_market?: number | null
+          avg_price?: number | null
+          courantheid_score?: number | null
+          created_at?: string | null
+          filters?: Json
+          id?: string
+          last_calculated_at?: string | null
+          median_price?: number | null
+          name: string
+          sales_last_30_days?: number | null
+          trend?: string | null
+          updated_at?: string | null
+          window_size?: number | null
+        }
+        Update: {
+          avg_days_on_market?: number | null
+          avg_price?: number | null
+          courantheid_score?: number | null
+          created_at?: string | null
+          filters?: Json
+          id?: string
+          last_calculated_at?: string | null
+          median_price?: number | null
+          name?: string
+          sales_last_30_days?: number | null
+          trend?: string | null
+          updated_at?: string | null
+          window_size?: number | null
+        }
+        Relationships: []
       }
       raw_listings: {
         Row: {
@@ -521,6 +625,67 @@ export type Database = {
             columns: ["listing_id"]
             isOneToOne: false
             referencedRelation: "listings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      watchlist_alerts: {
+        Row: {
+          alert_type: string
+          created_at: string | null
+          dealer_id: string | null
+          id: string
+          is_active: boolean | null
+          listing_id: string | null
+          segment_id: string | null
+          threshold: Json | null
+          trigger_data: Json | null
+          triggered_at: string | null
+        }
+        Insert: {
+          alert_type: string
+          created_at?: string | null
+          dealer_id?: string | null
+          id?: string
+          is_active?: boolean | null
+          listing_id?: string | null
+          segment_id?: string | null
+          threshold?: Json | null
+          trigger_data?: Json | null
+          triggered_at?: string | null
+        }
+        Update: {
+          alert_type?: string
+          created_at?: string | null
+          dealer_id?: string | null
+          id?: string
+          is_active?: boolean | null
+          listing_id?: string | null
+          segment_id?: string | null
+          threshold?: Json | null
+          trigger_data?: Json | null
+          triggered_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "watchlist_alerts_dealer_id_fkey"
+            columns: ["dealer_id"]
+            isOneToOne: false
+            referencedRelation: "dealers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "watchlist_alerts_listing_id_fkey"
+            columns: ["listing_id"]
+            isOneToOne: false
+            referencedRelation: "listings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "watchlist_alerts_segment_id_fkey"
+            columns: ["segment_id"]
+            isOneToOne: false
+            referencedRelation: "market_segments"
             referencedColumns: ["id"]
           },
         ]
