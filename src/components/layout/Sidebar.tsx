@@ -14,7 +14,8 @@ import {
   ChevronRight,
   Database,
   Search,
-  Layers
+  Layers,
+  Flame,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
@@ -23,12 +24,14 @@ interface NavItem {
   href: string;
   icon: React.ElementType;
   badge?: number;
+  isNew?: boolean;
 }
 
 const mainNavItems: NavItem[] = [
   { title: 'Dashboard', href: '/', icon: LayoutDashboard },
   { title: 'Markt Listings', href: '/listings', icon: Car },
   { title: 'Taxatie', href: '/valuation', icon: Calculator },
+  { title: 'Bestsellers', href: '/bestsellers', icon: Flame, isNew: true },
   { title: 'Segment Library', href: '/segments', icon: Layers },
   { title: 'Dealer Intelligence', href: '/dealers', icon: Building2 },
   { title: 'Inventory Monitor', href: '/inventory', icon: TrendingUp },
@@ -104,7 +107,12 @@ export function Sidebar() {
             >
               <item.icon className={cn('h-5 w-5', isActive && 'text-primary')} />
               {!collapsed && <span>{item.title}</span>}
-              {!collapsed && item.badge && (
+              {!collapsed && item.isNew && (
+                <Badge variant="default" className="ml-auto text-xs bg-primary">
+                  Nieuw
+                </Badge>
+              )}
+              {!collapsed && item.badge && !item.isNew && (
                 <Badge variant="secondary" className="ml-auto text-xs">
                   {item.badge}
                 </Badge>
