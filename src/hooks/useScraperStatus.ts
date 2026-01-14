@@ -117,9 +117,11 @@ async function fetchMockStatus(source: string): Promise<ScraperStatusResponse> {
     stats: {
       totalListings: 5670,
       activeListings: 5420,
-      goneListings: 250,
+      goneSuspectedListings: 150,
+      soldConfirmedListings: 80,
+      returnedListings: 20,
       lastDiscovery: lastDiscoveryJob?.completedAt || null,
-      lastDeepSync: lastDeepSyncJob?.completedAt || null,
+      lastLifecycleCheck: lastDeepSyncJob?.completedAt || null,
     },
     creditUsage: {
       today: todayCredits,

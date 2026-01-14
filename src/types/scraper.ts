@@ -1,6 +1,9 @@
 // ===== DATA SOURCE SWITCH =====
 export type DataSource = 'mock' | 'db' | 'api';
 
+// ===== LISTING STATUS (4-state lifecycle) =====
+export type ListingStatus = 'active' | 'gone_suspected' | 'sold_confirmed' | 'returned';
+
 // ===== RAW SCRAPER OUTPUT =====
 export interface RawScrapedListing {
   source: 'gaspedaal' | 'autoscout24' | 'marktplaats' | 'autotrack';
@@ -56,7 +59,8 @@ export interface ScraperListing {
   color: string | null;
   doors: number | null;
   registrationDate: string | null;
-  licensePlate: string | null;
+  licensePlate: string | null;        // Deprecated - use licensePlateHash
+  licensePlateHash: string | null;    // SHA-256 hash for privacy
   optionsRaw: string | null;
   
   // Dealer
@@ -64,10 +68,12 @@ export interface ScraperListing {
   dealerName: string | null;
   dealerCity: string | null;
   
-  // Lifecycle - only 'active' | 'gone' as per requirements
-  status: 'active' | 'gone';
+  // Lifecycle - 4-state model
+  status: ListingStatus;
   firstSeenAt: string;
   lastSeenAt: string;
+  goneDetectedAt: string | null;      // When marked as gone_suspected
+  soldConfirmedAt: string | null;     // When confirmed as sold
   daysOnMarket: number;
   
   // Normalization
@@ -78,9 +84,14 @@ export interface ScraperListing {
   courantheidScore: number | null;
   courantheidTrend: 'up' | 'down' | 'stable' | null;
 
-  // Sitemap/Discovery tracking
+  // Fingerprint/Discovery tracking
   vehicleFingerprint: string | null;
   sitemapLastmod: string | null;
+  
+  // Market analysis
+  priceBucket: number | null;         // Price bucket (5000 intervals)
+  mileageBucket: number | null;       // Mileage bucket (5000 intervals)
+  outboundSources: string[];          // Portals where listing appears (autotrack, anwb, etc.)
 }
 
 // ===== LISTING SNAPSHOT =====
@@ -91,12 +102,35 @@ export interface ListingSnapshot {
   
   price: number | null;
   mileage: number | null;
-  status: 'active' | 'gone';
+  status: ListingStatus;
   
   priceChanged: boolean;
   mileageChanged: boolean;
   statusChanged: boolean;
   priceDelta: number | null;
+}
+
+// ===== VEHICLE EVENT (Lifecycle tracking) =====
+export interface VehicleEvent {
+  id: string;
+  listingId: string;
+  eventType: 'created' | 'price_changed' | 'gone_detected' | 'returned' | 'sold_confirmed';
+  eventAt: string;
+  
+  priceAtEvent: number | null;
+  daysOnMarket: number | null;
+  isRealSale: boolean | null;
+  
+  // Vehicle snapshot
+  vehicleFingerprint: string | null;
+  licensePlateHash: string | null;
+  make: string | null;
+  model: string | null;
+  year: number | null;
+  mileage: number | null;
+  fuelType: string | null;
+  
+  reason: Record<string, any>;
 }
 
 // ===== DEALER (with hard keys for matching) =====
@@ -184,9 +218,11 @@ export interface ScraperStatusResponse {
   stats: {
     totalListings: number;
     activeListings: number;
-    goneListings: number;
+    goneSuspectedListings: number;
+    soldConfirmedListings: number;
+    returnedListings: number;
     lastDiscovery: string | null;
-    lastDeepSync: string | null;
+    lastLifecycleCheck: string | null;
   };
   creditUsage: {
     today: number;
@@ -215,7 +251,7 @@ export interface ListingsResponse {
 
 // ===== LISTINGS FILTERS =====
 export interface ListingsFilters {
-  status?: 'active' | 'gone' | 'all';
+  status?: ListingStatus | 'all';
   source?: string;
   make?: string;
   model?: string;

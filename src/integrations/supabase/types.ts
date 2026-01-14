@@ -113,21 +113,27 @@ export type Database = {
           doors: number | null
           first_seen_at: string
           fuel_type: string | null
+          gone_detected_at: string | null
           id: string
           is_normalized: boolean | null
           last_seen_at: string
           license_plate: string | null
+          license_plate_hash: string | null
           make: string | null
           mileage: number | null
+          mileage_bucket: number | null
           model: string | null
           normalization_confidence: number | null
           options_raw: string | null
+          outbound_sources: string[] | null
           power_pk: number | null
           previous_price: number | null
           price: number | null
+          price_bucket: number | null
           raw_listing_id: string | null
           registration_date: string | null
           sitemap_lastmod: string | null
+          sold_confirmed_at: string | null
           source: string
           status: string
           title: string
@@ -148,21 +154,27 @@ export type Database = {
           doors?: number | null
           first_seen_at?: string
           fuel_type?: string | null
+          gone_detected_at?: string | null
           id?: string
           is_normalized?: boolean | null
           last_seen_at?: string
           license_plate?: string | null
+          license_plate_hash?: string | null
           make?: string | null
           mileage?: number | null
+          mileage_bucket?: number | null
           model?: string | null
           normalization_confidence?: number | null
           options_raw?: string | null
+          outbound_sources?: string[] | null
           power_pk?: number | null
           previous_price?: number | null
           price?: number | null
+          price_bucket?: number | null
           raw_listing_id?: string | null
           registration_date?: string | null
           sitemap_lastmod?: string | null
+          sold_confirmed_at?: string | null
           source: string
           status?: string
           title: string
@@ -183,21 +195,27 @@ export type Database = {
           doors?: number | null
           first_seen_at?: string
           fuel_type?: string | null
+          gone_detected_at?: string | null
           id?: string
           is_normalized?: boolean | null
           last_seen_at?: string
           license_plate?: string | null
+          license_plate_hash?: string | null
           make?: string | null
           mileage?: number | null
+          mileage_bucket?: number | null
           model?: string | null
           normalization_confidence?: number | null
           options_raw?: string | null
+          outbound_sources?: string[] | null
           power_pk?: number | null
           previous_price?: number | null
           price?: number | null
+          price_bucket?: number | null
           raw_listing_id?: string | null
           registration_date?: string | null
           sitemap_lastmod?: string | null
+          sold_confirmed_at?: string | null
           source?: string
           status?: string
           title?: string
@@ -441,6 +459,71 @@ export type Database = {
           triggered_by?: string | null
         }
         Relationships: []
+      }
+      vehicle_events: {
+        Row: {
+          created_at: string | null
+          days_on_market: number | null
+          event_at: string
+          event_type: string
+          fuel_type: string | null
+          id: string
+          is_real_sale: boolean | null
+          license_plate_hash: string | null
+          listing_id: string
+          make: string | null
+          mileage: number | null
+          model: string | null
+          price_at_event: number | null
+          reason: Json | null
+          vehicle_fingerprint: string | null
+          year: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          days_on_market?: number | null
+          event_at?: string
+          event_type: string
+          fuel_type?: string | null
+          id?: string
+          is_real_sale?: boolean | null
+          license_plate_hash?: string | null
+          listing_id: string
+          make?: string | null
+          mileage?: number | null
+          model?: string | null
+          price_at_event?: number | null
+          reason?: Json | null
+          vehicle_fingerprint?: string | null
+          year?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          days_on_market?: number | null
+          event_at?: string
+          event_type?: string
+          fuel_type?: string | null
+          id?: string
+          is_real_sale?: boolean | null
+          license_plate_hash?: string | null
+          listing_id?: string
+          make?: string | null
+          mileage?: number | null
+          model?: string | null
+          price_at_event?: number | null
+          reason?: Json | null
+          vehicle_fingerprint?: string | null
+          year?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vehicle_events_listing_id_fkey"
+            columns: ["listing_id"]
+            isOneToOne: false
+            referencedRelation: "listings"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
