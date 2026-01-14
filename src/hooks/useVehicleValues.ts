@@ -106,12 +106,12 @@ export function useVehicleYears() {
   });
 }
 
-export function useVehicleOptions(make: string | undefined) {
+export function useVehicleOptions(make: string | undefined, fuelType?: string) {
   return useQuery({
-    queryKey: ['vehicle-values', 'options', make],
+    queryKey: ['vehicle-values', 'options', make, fuelType],
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke('vehicle-values', {
-        body: { type: 'options', filters: { make } },
+        body: { type: 'options', filters: { make, fuelType } },
       });
       if (error) throw error;
       return data.values as OptionsDatabase;

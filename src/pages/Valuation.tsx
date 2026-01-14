@@ -355,6 +355,7 @@ export default function Valuation() {
               <CardContent>
                 <OptionsSelector
                   make={formData.make}
+                  fuelType={formData.fuelType}
                   selectedOptions={formData.options || []}
                   onOptionsChange={handleOptionsChange}
                 />
