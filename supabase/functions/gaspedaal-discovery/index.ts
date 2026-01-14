@@ -8,67 +8,79 @@ const corsHeaders = {
 
 // ===== CONFIGURATION =====
 const FIRECRAWL_API_URL = 'https://api.firecrawl.dev/v1/scrape';
-const SITEMAP_INDEX_URL = 'https://www.gaspedaal.nl/sitemap-v3_gaspedaal.xml';
-const DELAY_BETWEEN_REQUESTS_MS = 200;
-const MAX_LISTINGS_PER_RUN = 8000;
+const DELAY_BETWEEN_REQUESTS_MS = 300;
 const BATCH_SIZE = 50;
 
-// ===== SAFETY THRESHOLDS (configurable via config) =====
+// ===== FILTERS (MVP: 2014+ and €2000+) =====
+const MIN_YEAR = 2014;
+const MIN_PRICE = 2000;
+const MAX_UNKNOWN_YEAR_PRICE_PERCENT = 0.05; // 5% budget for unknown year/price
+
+// ===== LIFECYCLE THRESHOLDS =====
+const GONE_SUSPECTED_DAYS = 7;   // Mark as gone_suspected after 7 days not seen
+const SOLD_CONFIRMED_DAYS = 30;  // Confirm as sold after 30 days
+
+// ===== SAFETY THRESHOLDS =====
 const DEFAULT_MAX_CREDITS_PER_DAY = 15000;
+const DEFAULT_MAX_CREDITS_PER_RUN = 1000;
 const DEFAULT_ERROR_RATE_THRESHOLD = 0.10;
-const DEFAULT_PARSE_QUALITY_THRESHOLD = 0.50;
-const SAFETY_CHECK_INTERVAL = 100; // Check safety every N listings
+const DEFAULT_PARSE_QUALITY_THRESHOLD = 0.60;
+const SAFETY_CHECK_INTERVAL = 50;
 
 // ===== TYPES =====
-interface SitemapEntry {
-  url: string;
-  lastmod: string | null;
-}
+type JobMode = 'discovery' | 'lifecycle_check';
+type ListingStatus = 'active' | 'gone_suspected' | 'sold_confirmed' | 'returned';
 
-interface RawListingData {
+interface IndexPageListing {
   url: string;
-  raw_title: string;
-  raw_price: string | null;
-  raw_mileage: string | null;
-  raw_year: string | null;
-  raw_fuel_type: string | null;
-  raw_transmission: string | null;
-  raw_body_type: string | null;
-  raw_color: string | null;
-  raw_doors: string | null;
-  raw_license_plate: string | null;
-  raw_options: string | null;
-  dealer_name_raw: string | null;
-  dealer_city_raw: string | null;
-  dealer_page_url: string | null;
-}
-
-interface CategorizedListings {
-  new: SitemapEntry[];
-  changed: SitemapEntry[];
-  unchanged: SitemapEntry[];
-  gone: string[];
+  title: string;
+  price: number | null;
+  year: number | null;
+  mileage: number | null;
+  fuelType: string | null;
+  transmission: string | null;
+  bodyType: string | null;
+  color: string | null;
+  doors: number | null;
+  dealerName: string | null;
+  dealerCity: string | null;
+  outboundSources: string[];
+  powerPk: number | null;
 }
 
 interface SafetyConfig {
   maxCreditsPerDay: number;
+  maxCreditsPerRun: number;
   errorRateThreshold: number;
   parseQualityThreshold: number;
 }
 
 interface SafetyState {
   creditsUsedToday: number;
-  sitemapRequests: number;
+  creditsUsedThisRun: number;
+  indexRequests: number;
   detailRequests: number;
   totalProcessed: number;
   successfulParses: number;
   failedParses: number;
+  unknownYearPriceCount: number;
   errors: number;
   stopReason: string | null;
 }
 
-// ===== HELPER: SHA-256 Content Hash =====
-async function createContentHash(data: string): Promise<string> {
+interface JobStats {
+  pagesProcessed: number;
+  listingsFound: number;
+  listingsNew: number;
+  listingsUpdated: number;
+  listingsGoneSuspected: number;
+  listingsSoldConfirmed: number;
+  listingsReturned: number;
+  errorsCount: number;
+}
+
+// ===== HELPER: SHA-256 Hash =====
+async function createHash(data: string): Promise<string> {
   const encoder = new TextEncoder();
   const dataBuffer = encoder.encode(data);
   const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer);
@@ -76,28 +88,55 @@ async function createContentHash(data: string): Promise<string> {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// ===== HELPER: Vehicle Fingerprint (Enhanced) =====
+// ===== HELPER: License Plate Hash (Privacy) =====
+async function hashLicensePlate(plate: string | null): Promise<string | null> {
+  if (!plate) return null;
+  const normalized = plate.replace(/[\s-]/g, '').toUpperCase();
+  return createHash(normalized);
+}
+
+// ===== HELPER: Vehicle Fingerprint (Fallback matching) =====
 function generateVehicleFingerprint(listing: {
   make?: string | null;
   model?: string | null;
   year?: number | null;
-  mileage?: number | null;
-  dealer_city?: string | null;
+  fuelType?: string | null;
+  bodyType?: string | null;
   color?: string | null;
-  doors?: number | null;
+  mileage?: number | null;
+  dealerName?: string | null;
 }): string {
-  const normalize = (s: string | null | undefined) => (s || '').toLowerCase().trim().replace(/\s+/g, '');
-  const mileageBucket = listing.mileage ? Math.round(listing.mileage / 5000) * 5000 : 0;
+  const normalize = (s: string | null | undefined) => 
+    (s || '').toLowerCase().trim().replace(/\s+/g, '');
+  
+  // 5000km buckets for robustness
+  const mileageBucket = listing.mileage 
+    ? Math.round(listing.mileage / 5000) * 5000 
+    : 0;
   
   return [
     normalize(listing.make),
     normalize(listing.model),
     listing.year || 'unknown',
-    mileageBucket,
-    normalize(listing.dealer_city),
+    normalize(listing.fuelType),
+    normalize(listing.bodyType),
     normalize(listing.color),
-    listing.doors || 0,
+    mileageBucket,
+    normalize(listing.dealerName),
   ].join('|');
+}
+
+// ===== HELPER: Content Hash =====
+async function createContentHash(listing: IndexPageListing): Promise<string> {
+  const content = [
+    listing.price || '',
+    listing.mileage || '',
+    listing.year || '',
+    listing.title,
+    listing.fuelType || '',
+    listing.transmission || '',
+  ].join('|');
+  return createHash(content);
 }
 
 // ===== HELPER: Parse Functions =====
@@ -105,7 +144,7 @@ function safeParsePrice(raw: string | null): number | null {
   if (!raw) return null;
   const cleaned = raw.replace(/[^\d]/g, '');
   const value = parseInt(cleaned, 10);
-  return isNaN(value) ? null : value;
+  return isNaN(value) || value === 0 ? null : value;
 }
 
 function safeParseMileage(raw: string | null): number | null {
@@ -127,9 +166,28 @@ function safeParseDoors(raw: string | null): number | null {
   return match ? parseInt(match[0], 10) : null;
 }
 
+function safeParsePower(raw: string | null): number | null {
+  if (!raw) return null;
+  // Match patterns like "140pk", "103kW", "140 pk"
+  const pkMatch = raw.match(/(\d+)\s*pk/i);
+  if (pkMatch) return parseInt(pkMatch[1], 10);
+  
+  const kwMatch = raw.match(/(\d+)\s*kw/i);
+  if (kwMatch) return Math.round(parseInt(kwMatch[1], 10) * 1.36); // Convert kW to pk
+  
+  return null;
+}
+
 // ===== HELPER: Delay =====
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ===== HELPER: Days difference =====
+function daysSince(dateStr: string): number {
+  const date = new Date(dateStr);
+  const now = new Date();
+  return Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 // ===== SAFETY: Check if we should stop =====
@@ -137,11 +195,19 @@ function checkSafetyLimits(
   safety: SafetyState,
   config: SafetyConfig
 ): { shouldStop: boolean; reason: string | null } {
-  // Check credit budget
+  // Check daily credit budget
   if (safety.creditsUsedToday >= config.maxCreditsPerDay) {
     return { 
       shouldStop: true, 
       reason: `Daily credit budget reached (${safety.creditsUsedToday}/${config.maxCreditsPerDay})` 
+    };
+  }
+
+  // Check per-run credit budget
+  if (safety.creditsUsedThisRun >= config.maxCreditsPerRun) {
+    return { 
+      shouldStop: true, 
+      reason: `Per-run credit budget reached (${safety.creditsUsedThisRun}/${config.maxCreditsPerRun})` 
     };
   }
 
@@ -158,53 +224,68 @@ function checkSafetyLimits(
 
   // Check parse quality (only after processing enough items)
   if (safety.totalProcessed >= SAFETY_CHECK_INTERVAL) {
-    const parseRate = safety.successfulParses / (safety.successfulParses + safety.failedParses);
-    if (parseRate < config.parseQualityThreshold) {
-      return { 
-        shouldStop: true, 
-        reason: `Parse success rate too low: ${(parseRate * 100).toFixed(1)}% (threshold: ${(config.parseQualityThreshold * 100).toFixed(1)}%)` 
-      };
+    const totalParses = safety.successfulParses + safety.failedParses;
+    if (totalParses > 0) {
+      const parseRate = safety.successfulParses / totalParses;
+      if (parseRate < config.parseQualityThreshold) {
+        return { 
+          shouldStop: true, 
+          reason: `Parse success rate too low: ${(parseRate * 100).toFixed(1)}% (threshold: ${(config.parseQualityThreshold * 100).toFixed(1)}%)` 
+        };
+      }
     }
   }
 
   return { shouldStop: false, reason: null };
 }
 
-// ===== SAFETY: Update daily credit usage =====
+// ===== CREDIT TRACKING =====
 async function updateDailyCreditUsage(
   supabase: any,
   source: string,
   credits: number,
-  sitemapReqs: number,
+  indexReqs: number,
   detailReqs: number
 ): Promise<void> {
   const today = new Date().toISOString().split('T')[0];
   
   try {
-    // Try to upsert credit usage for today
-    await supabase
+    const { data: existing } = await supabase
       .from('scraper_credit_usage')
-      .upsert({
-        date: today,
-        source,
-        credits_used: credits,
-        sitemap_requests: sitemapReqs,
-        detail_requests: detailReqs,
-        jobs_count: 1,
-        updated_at: new Date().toISOString(),
-      }, {
-        onConflict: 'date,source',
-      });
+      .select('id, credits_used, sitemap_requests, detail_requests, jobs_count')
+      .eq('date', today)
+      .eq('source', source)
+      .maybeSingle();
+
+    if (existing) {
+      await supabase
+        .from('scraper_credit_usage')
+        .update({
+          credits_used: existing.credits_used + credits,
+          sitemap_requests: existing.sitemap_requests + indexReqs,
+          detail_requests: existing.detail_requests + detailReqs,
+          jobs_count: existing.jobs_count + 1,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id);
+    } else {
+      await supabase
+        .from('scraper_credit_usage')
+        .insert({
+          date: today,
+          source,
+          credits_used: credits,
+          sitemap_requests: indexReqs,
+          detail_requests: detailReqs,
+          jobs_count: 1,
+        });
+    }
   } catch (error) {
     console.error('Error updating credit usage:', error);
   }
 }
 
-// ===== SAFETY: Get today's credit usage =====
-async function getTodayCreditUsage(
-  supabase: any,
-  source: string
-): Promise<number> {
+async function getTodayCreditUsage(supabase: any, source: string): Promise<number> {
   const today = new Date().toISOString().split('T')[0];
   
   try {
@@ -225,11 +306,18 @@ async function getTodayCreditUsage(
 async function scrapeWithFirecrawl(
   url: string, 
   apiKey: string,
-  safety: SafetyState
+  safety: SafetyState,
+  isIndexPage: boolean = false
 ): Promise<string | null> {
   try {
     safety.creditsUsedToday++;
-    safety.detailRequests++;
+    safety.creditsUsedThisRun++;
+    
+    if (isIndexPage) {
+      safety.indexRequests++;
+    } else {
+      safety.detailRequests++;
+    }
 
     const response = await fetch(FIRECRAWL_API_URL, {
       method: 'POST',
@@ -241,6 +329,7 @@ async function scrapeWithFirecrawl(
         url,
         formats: ['html'],
         onlyMainContent: false,
+        waitFor: 2000, // Wait for dynamic content
       }),
     });
 
@@ -259,171 +348,121 @@ async function scrapeWithFirecrawl(
   }
 }
 
-// ===== SITEMAP: Scrape for sitemap (tracks credits) =====
-async function scrapeForSitemap(
-  url: string, 
-  apiKey: string,
-  safety: SafetyState
-): Promise<string | null> {
-  safety.sitemapRequests++;
-  return scrapeWithFirecrawl(url, apiKey, safety);
+// ===== INDEX PAGE: Build URL =====
+function buildIndexPageUrl(page: number, make?: string): string {
+  const params = new URLSearchParams({
+    sort: 'date_desc',
+    min_year: MIN_YEAR.toString(),
+    min_price: MIN_PRICE.toString(),
+    page: page.toString(),
+  });
+  
+  if (make) {
+    params.set('merk', make.toLowerCase());
+  }
+  
+  return `https://www.gaspedaal.nl/occasionzoeker?${params.toString()}`;
 }
 
-// ===== SITEMAP: Parse Index =====
-async function fetchSitemapIndex(apiKey: string, safety: SafetyState): Promise<string[]> {
-  console.log('Fetching sitemap index:', SITEMAP_INDEX_URL);
+// ===== INDEX PAGE: Parse listing cards =====
+function parseIndexPageListings(html: string): IndexPageListing[] {
+  const listings: IndexPageListing[] = [];
   
-  const html = await scrapeForSitemap(SITEMAP_INDEX_URL, apiKey, safety);
-  if (!html) {
-    console.error('Failed to fetch sitemap index');
-    return [];
-  }
+  // Match listing cards - looking for article or div elements with listing data
+  // Gaspedaal uses structured listing cards with data attributes and nested elements
+  const cardPatterns = [
+    /<article[^>]*class="[^"]*listing[^"]*"[^>]*>([\s\S]*?)<\/article>/gi,
+    /<div[^>]*class="[^"]*listing-card[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/gi,
+    /<div[^>]*class="[^"]*result-item[^"]*"[^>]*>([\s\S]*?)<\/div>\s*(?=<div[^>]*class="[^"]*result-item|$)/gi,
+    /<a[^>]*href="(\/occasion\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi,
+  ];
 
-  const sitemapUrls: string[] = [];
-  const regex = /<loc>([^<]+)<\/loc>/gi;
+  // Try to find all listing URLs first
+  const urlPattern = /href="(\/occasion\/[^"]+)"/gi;
+  const foundUrls = new Set<string>();
   let match;
-  while ((match = regex.exec(html)) !== null) {
-    const url = match[1].trim();
-    if (url.includes('sitemap') && url.endsWith('.xml')) {
-      sitemapUrls.push(url);
-    }
-  }
-
-  console.log(`Found ${sitemapUrls.length} child sitemaps`);
-  return sitemapUrls;
-}
-
-// ===== SITEMAP: Parse Child Sitemap =====
-async function fetchSitemapEntries(
-  sitemapUrl: string, 
-  apiKey: string,
-  safety: SafetyState
-): Promise<SitemapEntry[]> {
-  console.log('Fetching sitemap:', sitemapUrl);
   
-  const html = await scrapeForSitemap(sitemapUrl, apiKey, safety);
-  if (!html) {
-    console.error('Failed to fetch sitemap:', sitemapUrl);
-    return [];
+  while ((match = urlPattern.exec(html)) !== null) {
+    const url = `https://www.gaspedaal.nl${match[1]}`;
+    foundUrls.add(url);
   }
 
-  const entries: SitemapEntry[] = [];
-  const urlBlockRegex = /<url>([\s\S]*?)<\/url>/gi;
-  let blockMatch;
-  
-  while ((blockMatch = urlBlockRegex.exec(html)) !== null) {
-    const block = blockMatch[1];
-    const locMatch = block.match(/<loc>([^<]+)<\/loc>/i);
-    const lastmodMatch = block.match(/<lastmod>([^<]+)<\/lastmod>/i);
-    
-    if (locMatch) {
-      const url = locMatch[1].trim();
-      if (url.includes('/occasion/') || url.includes('/auto/')) {
-        entries.push({
-          url,
-          lastmod: lastmodMatch ? lastmodMatch[1].trim() : null,
-        });
-      }
+  // For each URL, try to extract surrounding card data
+  for (const url of foundUrls) {
+    const listing = extractListingFromHtml(html, url);
+    if (listing) {
+      listings.push(listing);
     }
   }
 
-  console.log(`Parsed ${entries.length} listing entries from ${sitemapUrl}`);
-  return entries;
+  console.log(`Parsed ${listings.length} listings from index page`);
+  return listings;
 }
 
-// ===== CATEGORIZE: Compare sitemap vs DB =====
-async function categorizeListings(
-  sitemapEntries: SitemapEntry[],
-  supabase: any
-): Promise<CategorizedListings> {
-  const result: CategorizedListings = {
-    new: [],
-    changed: [],
-    unchanged: [],
-    gone: [],
-  };
-
-  const { data: existingListings, error } = await supabase
-    .from('listings')
-    .select('url, sitemap_lastmod, status')
-    .eq('source', 'gaspedaal');
-
-  if (error) {
-    console.error('Error fetching existing listings:', error);
-    return result;
-  }
-
-  type ListingRow = { url: string; sitemap_lastmod: string | null; status: string };
-  const existingMap = new Map<string, { sitemap_lastmod: string | null; status: string }>();
-  for (const listing of (existingListings || []) as ListingRow[]) {
-    existingMap.set(listing.url, {
-      sitemap_lastmod: listing.sitemap_lastmod,
-      status: listing.status,
-    });
-  }
-
-  const sitemapUrlSet = new Set(sitemapEntries.map(e => e.url));
-
-  for (const entry of sitemapEntries) {
-    const existing = existingMap.get(entry.url);
-
-    if (!existing) {
-      result.new.push(entry);
-    } else if (entry.lastmod) {
-      const entryLastmod = new Date(entry.lastmod).getTime();
-      const dbLastmod = existing.sitemap_lastmod 
-        ? new Date(existing.sitemap_lastmod).getTime() 
-        : 0;
-
-      if (entryLastmod > dbLastmod) {
-        result.changed.push(entry);
-      } else {
-        result.unchanged.push(entry);
-      }
-    } else {
-      result.unchanged.push(entry);
-    }
-  }
-
-  for (const [url, data] of existingMap) {
-    if (!sitemapUrlSet.has(url) && data.status === 'active') {
-      result.gone.push(url);
-    }
-  }
-
-  console.log(`Categorized: ${result.new.length} new, ${result.changed.length} changed, ${result.unchanged.length} unchanged, ${result.gone.length} gone`);
-  return result;
-}
-
-// ===== EXTRACT: Enhanced listing details from HTML =====
-function extractListingDetails(html: string, url: string): RawListingData | null {
+// ===== INDEX PAGE: Extract single listing data =====
+function extractListingFromHtml(html: string, url: string): IndexPageListing | null {
   try {
+    // Find the section of HTML around this URL
+    const urlPath = url.replace('https://www.gaspedaal.nl', '');
+    const urlIndex = html.indexOf(urlPath);
+    
+    if (urlIndex === -1) return null;
+    
+    // Get a window of HTML around this URL (3000 chars before and after)
+    const start = Math.max(0, urlIndex - 3000);
+    const end = Math.min(html.length, urlIndex + 3000);
+    const cardHtml = html.substring(start, end);
+    
     // Extract title
     let title = '';
-    const titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/i) ||
-                       html.match(/<title>([^<]+)<\/title>/i);
-    if (titleMatch) {
-      title = titleMatch[1].trim()
-        .replace(/\s*[-|]\s*Gaspedaal.*$/i, '')
-        .replace(/\s+/g, ' ');
+    const titlePatterns = [
+      /class="[^"]*title[^"]*"[^>]*>([^<]+)</i,
+      /class="[^"]*heading[^"]*"[^>]*>([^<]+)</i,
+      /<h[23][^>]*>([^<]+)</i,
+    ];
+    for (const pattern of titlePatterns) {
+      const match = cardHtml.match(pattern);
+      if (match && match[1] && match[1].length > 5) {
+        title = match[1].trim();
+        break;
+      }
     }
     
     if (!title) {
-      console.log(`No title found for ${url}`);
-      return null;
+      // Try to extract from URL
+      const urlMatch = urlPath.match(/\/occasion\/([^\/]+)/);
+      if (urlMatch) {
+        title = urlMatch[1].replace(/-/g, ' ');
+      }
     }
+    
+    if (!title) return null;
 
     // Extract price
     let rawPrice: string | null = null;
     const pricePatterns = [
-      /€\s*[\d.,]+/i,
+      /€\s*([\d.,]+)/,
       /class="[^"]*price[^"]*"[^>]*>([^<]+)</i,
-      /data-price="([^"]+)"/i,
+      /data-price="(\d+)"/i,
     ];
     for (const pattern of pricePatterns) {
-      const match = html.match(pattern);
+      const match = cardHtml.match(pattern);
       if (match) {
-        rawPrice = match[0].includes('€') ? match[0] : match[1];
+        rawPrice = match[1] || match[0];
+        break;
+      }
+    }
+
+    // Extract year
+    let rawYear: string | null = null;
+    const yearPatterns = [
+      /(\d{2}[-\/])?(\d{4})/,
+      /bouwjaar[^<]*?(\d{4})/i,
+    ];
+    for (const pattern of yearPatterns) {
+      const match = cardHtml.match(pattern);
+      if (match) {
+        rawYear = match[2] || match[1] || match[0];
         break;
       }
     }
@@ -432,179 +471,194 @@ function extractListingDetails(html: string, url: string): RawListingData | null
     let rawMileage: string | null = null;
     const mileagePatterns = [
       /(\d{1,3}(?:[.,]\d{3})*)\s*km/i,
-      /kilometerstand[^<]*?(\d{1,3}(?:[.,]\d{3})*)/i,
     ];
     for (const pattern of mileagePatterns) {
-      const match = html.match(pattern);
+      const match = cardHtml.match(pattern);
       if (match) {
-        rawMileage = match[1] ? `${match[1]} km` : match[0];
-        break;
-      }
-    }
-
-    // Extract year
-    let rawYear: string | null = null;
-    const yearPatterns = [
-      /bouwjaar[^<]*?(\d{4})/i,
-      /(\d{2}[-\/]\d{4})/,
-    ];
-    for (const pattern of yearPatterns) {
-      const match = html.match(pattern);
-      if (match) {
-        rawYear = match[1] || match[0];
+        rawMileage = match[1];
         break;
       }
     }
 
     // Extract fuel type
-    let rawFuelType: string | null = null;
+    let fuelType: string | null = null;
     const fuelPatterns = [
-      /brandstof[^<]*?<[^>]*>([^<]+)</i,
-      /(benzine|diesel|elektrisch|hybride|lpg|cng|waterstof|plug-in hybride)/i,
+      /(benzine|diesel|elektrisch|hybride|plug-in|lpg|cng|waterstof)/i,
     ];
     for (const pattern of fuelPatterns) {
-      const match = html.match(pattern);
+      const match = cardHtml.match(pattern);
       if (match) {
-        rawFuelType = normalizeFuelType(match[1]);
+        fuelType = normalizeFuelType(match[1]);
         break;
       }
     }
 
     // Extract transmission
-    let rawTransmission: string | null = null;
+    let transmission: string | null = null;
     const transPatterns = [
-      /transmissie[^<]*?<[^>]*>([^<]+)</i,
-      /(automaat|handgeschakeld|cvt|dsg|manueel|semi-automaat)/i,
+      /(automaat|handgeschakeld|manueel|cvt|dsg)/i,
     ];
     for (const pattern of transPatterns) {
-      const match = html.match(pattern);
+      const match = cardHtml.match(pattern);
       if (match) {
-        rawTransmission = normalizeTransmission(match[1]);
+        transmission = normalizeTransmission(match[1]);
         break;
       }
     }
 
-    // Extract body type (NEW)
-    let rawBodyType: string | null = null;
+    // Extract body type
+    let bodyType: string | null = null;
     const bodyPatterns = [
-      /carrosserie[^<]*?<[^>]*>([^<]+)</i,
-      /(hatchback|sedan|suv|stationwagon|stationwagen|mpv|cabrio|coupé|coupe|terreinwagen|bus|pick-?up|crossover|roadster)/i,
+      /(hatchback|sedan|suv|stationwagon|stationwagen|mpv|cabrio|coup[eé]|terreinwagen)/i,
     ];
     for (const pattern of bodyPatterns) {
-      const match = html.match(pattern);
+      const match = cardHtml.match(pattern);
       if (match) {
-        rawBodyType = normalizeBodyType(match[1]);
+        bodyType = normalizeBodyType(match[1]);
         break;
       }
     }
 
-    // Extract color (NEW)
-    let rawColor: string | null = null;
+    // Extract color
+    let color: string | null = null;
     const colorPatterns = [
-      /kleur[^<]*?<[^>]*>([^<]+)</i,
-      /exterieur[^<]*?kleur[^<]*?<[^>]*>([^<]+)</i,
+      /kleur[^<]*?([a-zë]+)/i,
+      /(zwart|wit|grijs|zilver|blauw|rood|groen|geel|oranje|bruin|beige|paars)/i,
     ];
     for (const pattern of colorPatterns) {
-      const match = html.match(pattern);
+      const match = cardHtml.match(pattern);
       if (match && match[1]) {
-        rawColor = match[1].trim().toLowerCase();
+        color = match[1].toLowerCase();
         break;
       }
     }
 
-    // Extract doors (NEW)
+    // Extract doors
     let rawDoors: string | null = null;
-    const doorsMatch = html.match(/(\d)\s*-?\s*deurs/i);
+    const doorsMatch = cardHtml.match(/(\d)\s*-?\s*deurs/i);
     if (doorsMatch) {
       rawDoors = doorsMatch[1];
     }
 
-    // Extract license plate (NEW) - Dutch format
-    let rawLicensePlate: string | null = null;
-    const licensePlatePatterns = [
-      /kenteken[^<]*?<[^>]*>([A-Z0-9]{1,3}[-\s]?[A-Z0-9]{2,3}[-\s]?[A-Z0-9]{1,2})</i,
-      /([A-Z]{2}[-\s]?\d{3}[-\s]?[A-Z]{1})/,
-      /([A-Z]{1}[-\s]?\d{3}[-\s]?[A-Z]{2})/,
-      /(\d{1,3}[-\s]?[A-Z]{2,3}[-\s]?[A-Z0-9]{1,2})/,
-    ];
-    for (const pattern of licensePlatePatterns) {
-      const match = html.match(pattern);
-      if (match && match[1]) {
-        rawLicensePlate = match[1].replace(/\s/g, '-').toUpperCase();
-        break;
-      }
-    }
-
-    // Extract options (NEW)
-    let rawOptions: string | null = null;
-    const optionsMatch = html.match(/uitrusting[^<]*?<[^>]*>([\s\S]{0,500}?)<\/div>/i);
-    if (optionsMatch && optionsMatch[1]) {
-      rawOptions = optionsMatch[1]
-        .replace(/<[^>]+>/g, ', ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .substring(0, 500);
-    }
-
     // Extract dealer info
-    let dealerNameRaw: string | null = null;
-    let dealerCityRaw: string | null = null;
-    let dealerPageUrl: string | null = null;
-
+    let dealerName: string | null = null;
+    let dealerCity: string | null = null;
+    
     const dealerPatterns = [
       /class="[^"]*dealer[^"]*"[^>]*>([^<]+)</i,
-      /verkoper[^<]*?<[^>]*>([^<]+)</i,
-      /aangeboden\s+door[^<]*?<[^>]*>([^<]+)</i,
+      /verkoper[^<]*?([^<]+)</i,
     ];
     for (const pattern of dealerPatterns) {
-      const match = html.match(pattern);
-      if (match && match[1]) {
-        dealerNameRaw = match[1].trim();
+      const match = cardHtml.match(pattern);
+      if (match && match[1] && match[1].length > 2) {
+        dealerName = match[1].trim();
         break;
       }
     }
 
     const cityPatterns = [
-      /plaats[^<]*?<[^>]*>([^<]+)</i,
-      /locatie[^<]*?<[^>]*>([^<]+)</i,
+      /\(([A-Z]{2})\)/,  // Match province codes like (GE), (NH)
+      /([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s*\([A-Z]{2}\)/,  // City with province
     ];
     for (const pattern of cityPatterns) {
-      const match = html.match(pattern);
+      const match = cardHtml.match(pattern);
       if (match && match[1]) {
-        dealerCityRaw = match[1].trim();
+        dealerCity = match[1].length === 2 ? null : match[1].trim();
         break;
       }
     }
 
-    const dealerLinkMatch = html.match(/href="(\/dealer\/[^"]+)"/i) ||
-                            html.match(/href="(https:\/\/www\.gaspedaal\.nl\/dealer\/[^"]+)"/i);
-    if (dealerLinkMatch) {
-      dealerPageUrl = dealerLinkMatch[1].startsWith('/') 
-        ? `https://www.gaspedaal.nl${dealerLinkMatch[1]}`
-        : dealerLinkMatch[1];
+    // Extract outbound sources (portals where listing appears)
+    const outboundSources: string[] = [];
+    const sourcePatterns = [
+      /(autotrack|autoscout24|anwb|marktplaats|viabovag|autoweek|gaspedaal)/gi,
+      /Bekijk\s+(?:deze\s+)?auto\s+op[^<]*?([^<]+)/i,
+    ];
+    
+    // Look for portal mentions
+    const portalMatch = cardHtml.match(/(?:Dealersite|AutoTrack|ANWB|AutoScout24|Marktplaats)/gi);
+    if (portalMatch) {
+      for (const portal of portalMatch) {
+        const normalized = portal.toLowerCase();
+        if (!outboundSources.includes(normalized)) {
+          outboundSources.push(normalized);
+        }
+      }
+    }
+
+    // Extract power
+    let rawPower: string | null = null;
+    const powerMatch = cardHtml.match(/(\d+)\s*(?:pk|kw)/i);
+    if (powerMatch) {
+      rawPower = powerMatch[0];
     }
 
     return {
       url,
-      raw_title: title,
-      raw_price: rawPrice,
-      raw_mileage: rawMileage,
-      raw_year: rawYear,
-      raw_fuel_type: rawFuelType,
-      raw_transmission: rawTransmission,
-      raw_body_type: rawBodyType,
-      raw_color: rawColor,
-      raw_doors: rawDoors,
-      raw_license_plate: rawLicensePlate,
-      raw_options: rawOptions,
-      dealer_name_raw: dealerNameRaw,
-      dealer_city_raw: dealerCityRaw,
-      dealer_page_url: dealerPageUrl,
+      title,
+      price: safeParsePrice(rawPrice),
+      year: safeParseYear(rawYear),
+      mileage: safeParseMileage(rawMileage),
+      fuelType,
+      transmission,
+      bodyType,
+      color,
+      doors: safeParseDoors(rawDoors),
+      dealerName,
+      dealerCity,
+      outboundSources,
+      powerPk: safeParsePower(rawPower),
     };
   } catch (error) {
-    console.error(`Error extracting details from ${url}:`, error);
+    console.error(`Error extracting listing from HTML:`, error);
     return null;
   }
+}
+
+// ===== DETAIL PAGE: Extract additional data =====
+function extractDetailPageData(html: string): {
+  licensePlate: string | null;
+  options: string | null;
+  dealerPageUrl: string | null;
+} {
+  // Extract license plate (Dutch format)
+  let licensePlate: string | null = null;
+  const licensePlatePatterns = [
+    /kenteken[^<]*?<[^>]*>([A-Z0-9]{1,3}[-\s]?[A-Z0-9]{2,3}[-\s]?[A-Z0-9]{1,2})</i,
+    /([A-Z]{2}[-\s]?\d{3}[-\s]?[A-Z]{1})/,
+    /([A-Z]{1}[-\s]?\d{3}[-\s]?[A-Z]{2})/,
+    /(\d{1,3}[-\s]?[A-Z]{2,3}[-\s]?[A-Z0-9]{1,2})/,
+  ];
+  for (const pattern of licensePlatePatterns) {
+    const match = html.match(pattern);
+    if (match && match[1]) {
+      licensePlate = match[1].replace(/\s/g, '-').toUpperCase();
+      break;
+    }
+  }
+
+  // Extract options
+  let options: string | null = null;
+  const optionsMatch = html.match(/uitrusting[^<]*?<[^>]*>([\s\S]{0,1000}?)<\/div>/i);
+  if (optionsMatch && optionsMatch[1]) {
+    options = optionsMatch[1]
+      .replace(/<[^>]+>/g, ', ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 500);
+  }
+
+  // Extract dealer page URL
+  let dealerPageUrl: string | null = null;
+  const dealerLinkMatch = html.match(/href="(\/dealer\/[^"]+)"/i) ||
+                          html.match(/href="(https:\/\/www\.gaspedaal\.nl\/dealer\/[^"]+)"/i);
+  if (dealerLinkMatch) {
+    dealerPageUrl = dealerLinkMatch[1].startsWith('/') 
+      ? `https://www.gaspedaal.nl${dealerLinkMatch[1]}`
+      : dealerLinkMatch[1];
+  }
+
+  return { licensePlate, options, dealerPageUrl };
 }
 
 // ===== NORMALIZATION FUNCTIONS =====
@@ -622,7 +676,6 @@ function normalizeFuelType(raw: string): string {
     'lpg': 'lpg',
     'cng': 'cng',
     'waterstof': 'waterstof',
-    'hydrogen': 'waterstof',
   };
   return mapping[lower] || lower;
 }
@@ -637,7 +690,6 @@ function normalizeTransmission(raw: string): string {
     'manual': 'handgeschakeld',
     'cvt': 'automaat',
     'dsg': 'automaat',
-    'semi-automaat': 'semi-automaat',
   };
   return mapping[lower] || lower;
 }
@@ -655,25 +707,19 @@ function normalizeBodyType(raw: string): string {
     'coupé': 'coupe',
     'coupe': 'coupe',
     'terreinwagen': 'suv',
-    'bus': 'mpv',
-    'pick-up': 'pickup',
-    'pickup': 'pickup',
-    'crossover': 'suv',
-    'roadster': 'cabrio',
   };
   return mapping[lower] || lower;
 }
 
-// ===== EXTRACT: Make/Model from title =====
+// ===== MAKE/MODEL EXTRACTION =====
 function extractMakeModel(title: string): { make: string | null; model: string | null } {
   const makes = [
     'Audi', 'BMW', 'Mercedes-Benz', 'Mercedes', 'Volkswagen', 'VW', 'Opel', 'Ford',
     'Peugeot', 'Renault', 'Citroën', 'Citroen', 'Fiat', 'Toyota', 'Honda', 'Mazda',
     'Nissan', 'Hyundai', 'Kia', 'Volvo', 'Skoda', 'Škoda', 'Seat', 'SEAT', 'MINI', 
     'Porsche', 'Land Rover', 'Jaguar', 'Tesla', 'Lexus', 'Alfa Romeo', 'Jeep', 
-    'Suzuki', 'Mitsubishi', 'Dacia', 'Smart', 'Chevrolet', 'Dodge', 'Ferrari', 
-    'Lamborghini', 'Maserati', 'Bentley', 'Rolls-Royce', 'Aston Martin', 'DS',
-    'Cupra', 'Polestar', 'Genesis', 'MG', 'BYD', 'Lynk & Co', 'NIO', 'XPeng'
+    'Suzuki', 'Mitsubishi', 'Dacia', 'Smart', 'Chevrolet', 'DS', 'Cupra', 
+    'Polestar', 'Genesis', 'MG', 'BYD', 'Lynk & Co', 'NIO', 'XPeng'
   ];
 
   const titleLower = title.toLowerCase();
@@ -699,6 +745,423 @@ function extractMakeModel(title: string): { make: string | null; model: string |
   return { make: null, model: null };
 }
 
+// ===== VEHICLE EVENT LOGGING =====
+async function logVehicleEvent(
+  supabase: any,
+  listingId: string,
+  eventType: string,
+  data: {
+    price?: number | null;
+    daysOnMarket?: number | null;
+    isRealSale?: boolean;
+    reason?: Record<string, any>;
+    listing?: any;
+  }
+): Promise<void> {
+  try {
+    await supabase.from('vehicle_events').insert({
+      listing_id: listingId,
+      event_type: eventType,
+      event_at: new Date().toISOString(),
+      price_at_event: data.price,
+      days_on_market: data.daysOnMarket,
+      is_real_sale: data.isRealSale,
+      vehicle_fingerprint: data.listing?.vehicle_fingerprint,
+      license_plate_hash: data.listing?.license_plate_hash,
+      make: data.listing?.make,
+      model: data.listing?.model,
+      year: data.listing?.year,
+      mileage: data.listing?.mileage,
+      fuel_type: data.listing?.fuel_type,
+      reason: data.reason || {},
+    });
+  } catch (error) {
+    console.error('Error logging vehicle event:', error);
+  }
+}
+
+// ===== DISCOVERY MODE: Main logic =====
+async function runDiscoveryMode(
+  supabase: any,
+  firecrawlKey: string,
+  safety: SafetyState,
+  safetyConfig: SafetyConfig,
+  stats: JobStats,
+  errorLog: any[],
+  maxPages: number
+): Promise<void> {
+  console.log(`Starting discovery mode (max ${maxPages} pages)`);
+  
+  for (let page = 1; page <= maxPages; page++) {
+    // Check safety limits
+    const safetyCheck = checkSafetyLimits(safety, safetyConfig);
+    if (safetyCheck.shouldStop) {
+      console.log(`Safety stop: ${safetyCheck.reason}`);
+      safety.stopReason = safetyCheck.reason;
+      break;
+    }
+
+    const indexUrl = buildIndexPageUrl(page);
+    console.log(`[Page ${page}] Fetching: ${indexUrl}`);
+    
+    const html = await scrapeWithFirecrawl(indexUrl, firecrawlKey, safety, true);
+    
+    if (!html) {
+      errorLog.push({
+        timestamp: new Date().toISOString(),
+        message: `Failed to fetch index page ${page}`,
+        url: indexUrl,
+      });
+      stats.errorsCount++;
+      await delay(DELAY_BETWEEN_REQUESTS_MS);
+      continue;
+    }
+
+    stats.pagesProcessed++;
+    
+    // Parse listings from index page
+    const listings = parseIndexPageListings(html);
+    stats.listingsFound += listings.length;
+    
+    if (listings.length === 0) {
+      console.log(`No more listings found on page ${page}, stopping`);
+      break;
+    }
+
+    // Process each listing
+    for (const listing of listings) {
+      safety.totalProcessed++;
+      
+      // Check unknown year/price budget
+      if (listing.year === null || listing.price === null) {
+        safety.unknownYearPriceCount++;
+        const unknownPercent = safety.unknownYearPriceCount / safety.totalProcessed;
+        
+        if (unknownPercent > MAX_UNKNOWN_YEAR_PRICE_PERCENT && safety.totalProcessed > 20) {
+          console.log(`Skipping listing with unknown year/price (budget: ${(unknownPercent * 100).toFixed(1)}%)`);
+          continue;
+        }
+      }
+
+      // Pre-filter: year >= 2014 and price >= 2000
+      if (listing.year !== null && listing.year < MIN_YEAR) {
+        continue;
+      }
+      if (listing.price !== null && listing.price < MIN_PRICE) {
+        continue;
+      }
+
+      // Check if listing exists in database
+      const { data: existingListing } = await supabase
+        .from('listings')
+        .select('id, status, price, mileage, content_hash, first_seen_at, gone_detected_at, license_plate_hash, vehicle_fingerprint')
+        .eq('url', listing.url)
+        .maybeSingle();
+
+      const { make, model } = extractMakeModel(listing.title);
+      const contentHash = await createContentHash(listing);
+      const fingerprint = generateVehicleFingerprint({
+        make,
+        model,
+        year: listing.year,
+        fuelType: listing.fuelType,
+        bodyType: listing.bodyType,
+        color: listing.color,
+        mileage: listing.mileage,
+        dealerName: listing.dealerName,
+      });
+
+      const now = new Date().toISOString();
+
+      if (!existingListing) {
+        // NEW LISTING - check if it's a return (false sale)
+        const { data: matchByFingerprint } = await supabase
+          .from('listings')
+          .select('id, status, gone_detected_at, license_plate_hash')
+          .eq('vehicle_fingerprint', fingerprint)
+          .eq('status', 'gone_suspected')
+          .maybeSingle();
+
+        let isReturn = false;
+        let returnedListingId: string | null = null;
+
+        if (matchByFingerprint) {
+          const daysSinceGone = daysSince(matchByFingerprint.gone_detected_at);
+          if (daysSinceGone < SOLD_CONFIRMED_DAYS) {
+            isReturn = true;
+            returnedListingId = matchByFingerprint.id;
+          }
+        }
+
+        if (isReturn && returnedListingId) {
+          // RETURNED (false sale) - update existing listing
+          await supabase
+            .from('listings')
+            .update({
+              status: 'returned',
+              url: listing.url,
+              price: listing.price,
+              mileage: listing.mileage,
+              last_seen_at: now,
+              content_hash: contentHash,
+            })
+            .eq('id', returnedListingId);
+
+          await logVehicleEvent(supabase, returnedListingId, 'returned', {
+            price: listing.price,
+            isRealSale: false,
+            reason: { matched_by: 'fingerprint', new_url: listing.url },
+          });
+
+          stats.listingsReturned++;
+          safety.successfulParses++;
+        } else {
+          // Truly new listing - need detail page for license plate
+          let licensePlateHash: string | null = null;
+          let options: string | null = null;
+          let dealerPageUrl: string | null = null;
+
+          // Only scrape detail if we have budget
+          const budgetCheck = checkSafetyLimits(safety, safetyConfig);
+          if (!budgetCheck.shouldStop) {
+            const detailHtml = await scrapeWithFirecrawl(listing.url, firecrawlKey, safety, false);
+            if (detailHtml) {
+              const detailData = extractDetailPageData(detailHtml);
+              licensePlateHash = await hashLicensePlate(detailData.licensePlate);
+              options = detailData.options;
+              dealerPageUrl = detailData.dealerPageUrl;
+            }
+            await delay(DELAY_BETWEEN_REQUESTS_MS);
+          }
+
+          // Calculate buckets
+          const priceBucket = listing.price ? Math.floor(listing.price / 5000) * 5000 : null;
+          const mileageBucket = listing.mileage ? Math.floor(listing.mileage / 5000) * 5000 : null;
+
+          // Insert new listing
+          const { data: newListing, error: insertError } = await supabase
+            .from('listings')
+            .insert({
+              url: listing.url,
+              source: 'gaspedaal',
+              title: listing.title,
+              make,
+              model,
+              year: listing.year,
+              mileage: listing.mileage,
+              price: listing.price,
+              fuel_type: listing.fuelType,
+              transmission: listing.transmission,
+              body_type: listing.bodyType,
+              color: listing.color,
+              doors: listing.doors,
+              power_pk: listing.powerPk,
+              dealer_name: listing.dealerName,
+              dealer_city: listing.dealerCity,
+              status: 'active',
+              first_seen_at: now,
+              last_seen_at: now,
+              content_hash: contentHash,
+              vehicle_fingerprint: fingerprint,
+              license_plate_hash: licensePlateHash,
+              price_bucket: priceBucket,
+              mileage_bucket: mileageBucket,
+              outbound_sources: listing.outboundSources,
+              options_raw: options,
+            })
+            .select('id')
+            .single();
+
+          if (insertError) {
+            console.error('Error inserting listing:', insertError);
+            stats.errorsCount++;
+            safety.failedParses++;
+          } else {
+            stats.listingsNew++;
+            safety.successfulParses++;
+
+            // Log creation event
+            await logVehicleEvent(supabase, newListing.id, 'created', {
+              price: listing.price,
+              listing: { make, model, year: listing.year, mileage: listing.mileage, fuel_type: listing.fuelType },
+            });
+          }
+        }
+      } else {
+        // EXISTING LISTING - check for updates
+        
+        // Handle returned listings (was gone_suspected, now seen again)
+        if (existingListing.status === 'gone_suspected') {
+          const daysSinceGone = daysSince(existingListing.gone_detected_at);
+          
+          if (daysSinceGone < SOLD_CONFIRMED_DAYS) {
+            // RETURNED (false sale)
+            await supabase
+              .from('listings')
+              .update({
+                status: 'returned',
+                price: listing.price,
+                mileage: listing.mileage,
+                last_seen_at: now,
+                content_hash: contentHash,
+              })
+              .eq('id', existingListing.id);
+
+            await logVehicleEvent(supabase, existingListing.id, 'returned', {
+              price: listing.price,
+              isRealSale: false,
+              reason: { days_gone: daysSinceGone },
+            });
+
+            stats.listingsReturned++;
+            safety.successfulParses++;
+            continue;
+          }
+        }
+
+        // Reset returned listings to active
+        if (existingListing.status === 'returned') {
+          await supabase
+            .from('listings')
+            .update({ status: 'active', last_seen_at: now })
+            .eq('id', existingListing.id);
+        }
+
+        // Check for price change
+        if (existingListing.price !== listing.price && listing.price !== null) {
+          await supabase
+            .from('listings')
+            .update({
+              price: listing.price,
+              previous_price: existingListing.price,
+              last_seen_at: now,
+              content_hash: contentHash,
+            })
+            .eq('id', existingListing.id);
+
+          // Log price change event
+          await logVehicleEvent(supabase, existingListing.id, 'price_changed', {
+            price: listing.price,
+            reason: { previous_price: existingListing.price },
+          });
+
+          // Create snapshot
+          await supabase.from('listing_snapshots').insert({
+            listing_id: existingListing.id,
+            price: listing.price,
+            mileage: listing.mileage,
+            status: 'active',
+            price_changed: true,
+            price_delta: listing.price - (existingListing.price || 0),
+          });
+
+          stats.listingsUpdated++;
+        } else {
+          // Just update last_seen_at
+          await supabase
+            .from('listings')
+            .update({ last_seen_at: now, status: 'active' })
+            .eq('id', existingListing.id);
+        }
+
+        safety.successfulParses++;
+      }
+    }
+
+    await delay(DELAY_BETWEEN_REQUESTS_MS);
+  }
+}
+
+// ===== LIFECYCLE CHECK MODE: Main logic =====
+async function runLifecycleCheckMode(
+  supabase: any,
+  safety: SafetyState,
+  stats: JobStats,
+  targetMakes?: string[]
+): Promise<void> {
+  console.log(`Starting lifecycle check mode`);
+  const now = new Date().toISOString();
+
+  // 1. Find listings not seen in > GONE_SUSPECTED_DAYS days and still active
+  let query = supabase
+    .from('listings')
+    .select('id, url, first_seen_at, last_seen_at, price, license_plate_hash, vehicle_fingerprint, make, model, year, mileage, fuel_type')
+    .eq('source', 'gaspedaal')
+    .eq('status', 'active')
+    .lt('last_seen_at', new Date(Date.now() - GONE_SUSPECTED_DAYS * 24 * 60 * 60 * 1000).toISOString());
+
+  if (targetMakes && targetMakes.length > 0) {
+    query = query.in('make', targetMakes);
+  }
+
+  const { data: staleListings, error: staleError } = await query.limit(1000);
+
+  if (staleError) {
+    console.error('Error fetching stale listings:', staleError);
+    return;
+  }
+
+  console.log(`Found ${staleListings?.length || 0} stale listings to mark as gone_suspected`);
+
+  // Mark stale listings as gone_suspected
+  for (const listing of (staleListings || [])) {
+    const daysOnMarket = daysSince(listing.first_seen_at);
+
+    await supabase
+      .from('listings')
+      .update({
+        status: 'gone_suspected',
+        gone_detected_at: now,
+      })
+      .eq('id', listing.id);
+
+    await logVehicleEvent(supabase, listing.id, 'gone_detected', {
+      price: listing.price,
+      daysOnMarket,
+      listing,
+    });
+
+    stats.listingsGoneSuspected++;
+  }
+
+  // 2. Confirm sales for listings gone > SOLD_CONFIRMED_DAYS days
+  const { data: oldGoneListings, error: oldGoneError } = await supabase
+    .from('listings')
+    .select('id, url, first_seen_at, gone_detected_at, price, license_plate_hash, vehicle_fingerprint, make, model, year, mileage, fuel_type')
+    .eq('source', 'gaspedaal')
+    .eq('status', 'gone_suspected')
+    .lt('gone_detected_at', new Date(Date.now() - SOLD_CONFIRMED_DAYS * 24 * 60 * 60 * 1000).toISOString())
+    .limit(500);
+
+  if (oldGoneError) {
+    console.error('Error fetching old gone listings:', oldGoneError);
+    return;
+  }
+
+  console.log(`Found ${oldGoneListings?.length || 0} listings to confirm as sold`);
+
+  for (const listing of (oldGoneListings || [])) {
+    const daysOnMarket = daysSince(listing.first_seen_at);
+
+    await supabase
+      .from('listings')
+      .update({
+        status: 'sold_confirmed',
+        sold_confirmed_at: now,
+      })
+      .eq('id', listing.id);
+
+    await logVehicleEvent(supabase, listing.id, 'sold_confirmed', {
+      price: listing.price,
+      daysOnMarket,
+      isRealSale: true,
+      listing,
+    });
+
+    stats.listingsSoldConfirmed++;
+  }
+}
+
 // ===== MAIN HANDLER =====
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -707,31 +1170,43 @@ serve(async (req) => {
 
   const startTime = Date.now();
   const errorLog: Array<{ timestamp: string; message: string; url?: string }> = [];
-  const stats = {
-    pages: 0,
-    found: 0,
-    new: 0,
-    updated: 0,
-    gone: 0,
-    errors: 0,
+  
+  const stats: JobStats = {
+    pagesProcessed: 0,
+    listingsFound: 0,
+    listingsNew: 0,
+    listingsUpdated: 0,
+    listingsGoneSuspected: 0,
+    listingsSoldConfirmed: 0,
+    listingsReturned: 0,
+    errorsCount: 0,
   };
 
-  // Initialize safety state
   const safety: SafetyState = {
     creditsUsedToday: 0,
-    sitemapRequests: 0,
+    creditsUsedThisRun: 0,
+    indexRequests: 0,
     detailRequests: 0,
     totalProcessed: 0,
     successfulParses: 0,
     failedParses: 0,
+    unknownYearPriceCount: 0,
     errors: 0,
     stopReason: null,
   };
 
   try {
-    const { jobId, mode = 'incremental' } = await req.json();
+    const body = await req.json();
+    const { 
+      jobId, 
+      mode = 'discovery' as JobMode,
+      targetMakes = [] as string[],
+      maxPages = 50,
+      maxCredits = DEFAULT_MAX_CREDITS_PER_RUN,
+    } = body;
     
-    console.log(`Starting Gaspedaal discovery job ${jobId} in ${mode} mode`);
+    console.log(`Starting Gaspedaal ${mode} job ${jobId}`);
+    console.log(`Config: maxPages=${maxPages}, maxCredits=${maxCredits}, targetMakes=${targetMakes.join(',') || 'all'}`);
 
     // Initialize clients
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -753,6 +1228,7 @@ serve(async (req) => {
 
     const safetyConfig: SafetyConfig = {
       maxCreditsPerDay: configData?.max_credits_per_day ?? DEFAULT_MAX_CREDITS_PER_DAY,
+      maxCreditsPerRun: maxCredits,
       errorRateThreshold: parseFloat(configData?.error_rate_threshold ?? DEFAULT_ERROR_RATE_THRESHOLD),
       parseQualityThreshold: parseFloat(configData?.parse_quality_threshold ?? DEFAULT_PARSE_QUALITY_THRESHOLD),
     };
@@ -771,451 +1247,133 @@ serve(async (req) => {
     // Update job status to running
     await supabase
       .from('scraper_jobs')
-      .update({ status: 'running', started_at: new Date().toISOString() })
+      .update({ 
+        status: 'running', 
+        started_at: new Date().toISOString(),
+        job_type: mode,
+      })
       .eq('id', jobId);
 
-    // ===== PHASE 1: Fetch and parse sitemaps =====
-    const sitemapUrls = await fetchSitemapIndex(firecrawlKey, safety);
-    stats.pages = sitemapUrls.length;
-
-    if (sitemapUrls.length === 0) {
-      errorLog.push({
-        timestamp: new Date().toISOString(),
-        message: 'No sitemaps found in index',
-        url: SITEMAP_INDEX_URL,
-      });
-      stats.errors++;
+    // Run appropriate mode
+    if (mode === 'discovery') {
+      await runDiscoveryMode(
+        supabase,
+        firecrawlKey,
+        safety,
+        safetyConfig,
+        stats,
+        errorLog,
+        maxPages
+      );
+    } else if (mode === 'lifecycle_check') {
+      await runLifecycleCheckMode(
+        supabase,
+        safety,
+        stats,
+        targetMakes
+      );
     }
 
-    // Fetch all sitemap entries (with safety checks)
-    const allEntries: SitemapEntry[] = [];
-    for (const sitemapUrl of sitemapUrls) {
-      // Check safety before each sitemap fetch
-      const safetyCheck = checkSafetyLimits(safety, safetyConfig);
-      if (safetyCheck.shouldStop) {
-        console.log(`Safety stop during sitemap fetch: ${safetyCheck.reason}`);
-        safety.stopReason = safetyCheck.reason;
-        break;
-      }
+    // Calculate duration
+    const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
+    const parseSuccessRate = safety.totalProcessed > 0 
+      ? safety.successfulParses / safety.totalProcessed 
+      : 1;
+    const errorRate = safety.totalProcessed > 0 
+      ? safety.errors / safety.totalProcessed 
+      : 0;
 
-      const entries = await fetchSitemapEntries(sitemapUrl, firecrawlKey, safety);
-      allEntries.push(...entries);
-      await delay(DELAY_BETWEEN_REQUESTS_MS);
-    }
-
-    console.log(`Total sitemap entries: ${allEntries.length}`);
-    stats.found = allEntries.length;
-
-    // ===== PHASE 2: Categorize listings =====
-    const categorized = await categorizeListings(allEntries, supabase);
-
-    // ===== PHASE 3: Mark gone listings (0 credits!) =====
-    if (categorized.gone.length > 0 && !safety.stopReason) {
-      console.log(`Marking ${categorized.gone.length} listings as gone`);
-      
-      const now = new Date().toISOString();
-      
-      for (let i = 0; i < categorized.gone.length; i += BATCH_SIZE) {
-        const batch = categorized.gone.slice(i, i + BATCH_SIZE);
-        
-        const { error } = await supabase
-          .from('listings')
-          .update({ status: 'gone', last_seen_at: now })
-          .in('url', batch);
-
-        if (error) {
-          console.error('Error marking gone listings:', error);
-          stats.errors++;
-        } else {
-          stats.gone += batch.length;
-        }
-      }
-    }
-
-    // ===== PHASE 4: Update last_seen_at for unchanged listings (0 credits!) =====
-    if (categorized.unchanged.length > 0 && !safety.stopReason) {
-      console.log(`Updating last_seen_at for ${categorized.unchanged.length} unchanged listings`);
-      
-      const now = new Date().toISOString();
-      const unchangedUrls = categorized.unchanged.map(e => e.url);
-      
-      for (let i = 0; i < unchangedUrls.length; i += BATCH_SIZE) {
-        const batch = unchangedUrls.slice(i, i + BATCH_SIZE);
-        
-        await supabase
-          .from('listings')
-          .update({ last_seen_at: now })
-          .in('url', batch);
-      }
-    }
-
-    // ===== PHASE 5: Scrape new and changed listings (with safety limits!) =====
-    if (!safety.stopReason) {
-      const toScrape = [...categorized.new, ...categorized.changed];
-      const limitedToScrape = toScrape.slice(0, MAX_LISTINGS_PER_RUN);
-      
-      console.log(`Scraping ${limitedToScrape.length} listings (${categorized.new.length} new, ${categorized.changed.length} changed)`);
-
-      for (const entry of limitedToScrape) {
-        // Check safety before each scrape
-        const safetyCheck = checkSafetyLimits(safety, safetyConfig);
-        if (safetyCheck.shouldStop) {
-          console.log(`Safety stop during scraping: ${safetyCheck.reason}`);
-          safety.stopReason = safetyCheck.reason;
-          break;
-        }
-
-        try {
-          safety.totalProcessed++;
-          console.log(`[${safety.totalProcessed}] Scraping: ${entry.url}`);
-          
-          const html = await scrapeWithFirecrawl(entry.url, firecrawlKey, safety);
-          
-          if (!html) {
-            errorLog.push({
-              timestamp: new Date().toISOString(),
-              message: 'Failed to scrape listing page',
-              url: entry.url,
-            });
-            stats.errors++;
-            safety.failedParses++;
-            await delay(DELAY_BETWEEN_REQUESTS_MS);
-            continue;
-          }
-
-          const rawData = extractListingDetails(html, entry.url);
-          if (!rawData) {
-            errorLog.push({
-              timestamp: new Date().toISOString(),
-              message: 'Failed to parse listing page',
-              url: entry.url,
-            });
-            stats.errors++;
-            safety.failedParses++;
-            await delay(DELAY_BETWEEN_REQUESTS_MS);
-            continue;
-          }
-
-          // Validate essential fields
-          if (!rawData.raw_title || !rawData.raw_price) {
-            errorLog.push({
-              timestamp: new Date().toISOString(),
-              message: 'Missing essential fields (title or price)',
-              url: entry.url,
-            });
-            safety.failedParses++;
-            await delay(DELAY_BETWEEN_REQUESTS_MS);
-            continue;
-          }
-
-          safety.successfulParses++;
-
-          // Parse values
-          const parsedPrice = safeParsePrice(rawData.raw_price);
-          const parsedMileage = safeParseMileage(rawData.raw_mileage);
-          const parsedYear = safeParseYear(rawData.raw_year);
-          const parsedDoors = safeParseDoors(rawData.raw_doors);
-          const { make, model } = extractMakeModel(rawData.raw_title);
-
-          // Create content hash
-          const hashInput = `${rawData.raw_title}|${rawData.raw_price || ''}|${rawData.raw_mileage || ''}|${rawData.raw_year || ''}|${rawData.dealer_name_raw || ''}`;
-          const contentHash = await createContentHash(hashInput);
-
-          // Generate enhanced vehicle fingerprint
-          const vehicleFingerprint = await createContentHash(generateVehicleFingerprint({
-            make,
-            model,
-            year: parsedYear,
-            mileage: parsedMileage,
-            dealer_city: rawData.dealer_city_raw,
-            color: rawData.raw_color,
-            doors: parsedDoors,
-          }));
-
-          const now = new Date().toISOString();
-
-          // Check if listing exists
-          const { data: existingListing } = await supabase
-            .from('listings')
-            .select('id, content_hash, price, mileage')
-            .eq('url', entry.url)
-            .maybeSingle();
-
-          // Upsert raw_listings
-          await supabase
-            .from('raw_listings')
-            .upsert({
-              source: 'gaspedaal',
-              url: entry.url,
-              raw_title: rawData.raw_title,
-              raw_price: rawData.raw_price,
-              raw_mileage: rawData.raw_mileage,
-              raw_year: rawData.raw_year,
-              raw_specs: {
-                fuel_type: rawData.raw_fuel_type,
-                transmission: rawData.raw_transmission,
-                body_type: rawData.raw_body_type,
-                color: rawData.raw_color,
-                doors: rawData.raw_doors,
-                license_plate: rawData.raw_license_plate,
-                options: rawData.raw_options,
-              },
-              dealer_name_raw: rawData.dealer_name_raw,
-              dealer_city_raw: rawData.dealer_city_raw,
-              dealer_page_url: rawData.dealer_page_url,
-              content_hash: contentHash,
-              last_seen_at: now,
-              scraped_at: now,
-            }, { 
-              onConflict: 'source,url',
-              ignoreDuplicates: false 
-            });
-
-          if (!existingListing) {
-            // NEW LISTING
-            const { data: newListing, error: insertError } = await supabase
-              .from('listings')
-              .insert({
-                source: 'gaspedaal',
-                url: entry.url,
-                title: rawData.raw_title,
-                make,
-                model,
-                price: parsedPrice,
-                mileage: parsedMileage,
-                year: parsedYear,
-                fuel_type: rawData.raw_fuel_type,
-                transmission: rawData.raw_transmission,
-                body_type: rawData.raw_body_type,
-                color: rawData.raw_color,
-                doors: parsedDoors,
-                license_plate: rawData.raw_license_plate,
-                options_raw: rawData.raw_options,
-                dealer_name: rawData.dealer_name_raw,
-                dealer_city: rawData.dealer_city_raw,
-                status: 'active',
-                content_hash: contentHash,
-                vehicle_fingerprint: vehicleFingerprint,
-                sitemap_lastmod: entry.lastmod,
-                first_seen_at: now,
-                last_seen_at: now,
-              })
-              .select('id')
-              .single();
-
-            if (insertError) {
-              console.error('Listing insert error:', insertError);
-              stats.errors++;
-            } else if (newListing) {
-              stats.new++;
-
-              // Create initial snapshot
-              await supabase.from('listing_snapshots').insert({
-                listing_id: newListing.id,
-                price: parsedPrice,
-                mileage: parsedMileage,
-                status: 'active',
-                price_changed: false,
-                mileage_changed: false,
-                status_changed: false,
-                content_hash: contentHash,
-              });
-            }
-          } else {
-            // EXISTING LISTING - Update
-            const contentChanged = existingListing.content_hash !== contentHash;
-
-            const updateData: Record<string, unknown> = {
-              last_seen_at: now,
-              sitemap_lastmod: entry.lastmod,
-              title: rawData.raw_title,
-              make,
-              model,
-              price: parsedPrice,
-              mileage: parsedMileage,
-              year: parsedYear,
-              fuel_type: rawData.raw_fuel_type,
-              transmission: rawData.raw_transmission,
-              body_type: rawData.raw_body_type,
-              color: rawData.raw_color,
-              doors: parsedDoors,
-              license_plate: rawData.raw_license_plate,
-              options_raw: rawData.raw_options,
-              dealer_name: rawData.dealer_name_raw,
-              dealer_city: rawData.dealer_city_raw,
-              vehicle_fingerprint: vehicleFingerprint,
-              status: 'active',
-            };
-
-            if (contentChanged) {
-              updateData.content_hash = contentHash;
-              updateData.previous_price = existingListing.price;
-              stats.updated++;
-
-              // Create snapshot on change
-              const priceChanged = parsedPrice !== existingListing.price;
-              const mileageChanged = parsedMileage !== existingListing.mileage;
-              const priceDelta = (priceChanged && parsedPrice !== null && existingListing.price !== null)
-                ? parsedPrice - existingListing.price
-                : null;
-
-              await supabase.from('listing_snapshots').insert({
-                listing_id: existingListing.id,
-                price: parsedPrice,
-                mileage: parsedMileage,
-                status: 'active',
-                price_changed: priceChanged,
-                mileage_changed: mileageChanged,
-                status_changed: false,
-                price_delta: priceDelta,
-                content_hash: contentHash,
-              });
-            }
-
-            await supabase
-              .from('listings')
-              .update(updateData)
-              .eq('id', existingListing.id);
-          }
-
-          await delay(DELAY_BETWEEN_REQUESTS_MS);
-
-        } catch (listingError) {
-          console.error(`Error processing ${entry.url}:`, listingError);
-          errorLog.push({
-            timestamp: new Date().toISOString(),
-            message: listingError instanceof Error ? listingError.message : 'Unknown error',
-            url: entry.url,
-          });
-          stats.errors++;
-          safety.errors++;
-          await delay(DELAY_BETWEEN_REQUESTS_MS);
-        }
-      }
-    }
-
-    // ===== Update credit usage =====
-    const totalCreditsThisJob = safety.sitemapRequests + safety.detailRequests;
-    await updateDailyCreditUsage(
-      supabase, 
-      'gaspedaal', 
-      safety.creditsUsedToday, // This includes credits from before + this job
-      safety.sitemapRequests,
-      safety.detailRequests
-    );
-
-    // ===== Calculate quality metrics =====
-    const parseSuccessRate = safety.successfulParses + safety.failedParses > 0
-      ? (safety.successfulParses / (safety.successfulParses + safety.failedParses)) * 100
-      : null;
-    
-    const errorRate = safety.totalProcessed > 0
-      ? (safety.errors / safety.totalProcessed) * 100
-      : null;
-
-    // ===== Update job record =====
-    const durationSeconds = Math.round((Date.now() - startTime) / 1000);
-
+    // Update job as completed
     await supabase
       .from('scraper_jobs')
       .update({
-        status: safety.stopReason ? 'failed' : 'completed',
+        status: 'completed',
         completed_at: new Date().toISOString(),
         duration_seconds: durationSeconds,
-        pages_processed: stats.pages,
-        listings_found: stats.found,
-        listings_new: stats.new,
-        listings_updated: stats.updated,
-        listings_gone: stats.gone,
-        errors_count: stats.errors,
-        error_log: errorLog,
-        credits_used: totalCreditsThisJob,
-        sitemap_requests: safety.sitemapRequests,
+        pages_processed: stats.pagesProcessed,
+        listings_found: stats.listingsFound,
+        listings_new: stats.listingsNew,
+        listings_updated: stats.listingsUpdated,
+        listings_gone: stats.listingsGoneSuspected + stats.listingsSoldConfirmed,
+        errors_count: stats.errorsCount,
+        credits_used: safety.creditsUsedThisRun,
+        sitemap_requests: safety.indexRequests,
         detail_requests: safety.detailRequests,
         parse_success_rate: parseSuccessRate,
         error_rate: errorRate,
         stop_reason: safety.stopReason,
+        error_log: errorLog.slice(0, 100),
       })
       .eq('id', jobId);
 
-    console.log(`Job ${jobId} ${safety.stopReason ? 'stopped' : 'completed'}:`, {
-      ...stats,
-      creditsUsed: totalCreditsThisJob,
-      parseSuccessRate: parseSuccessRate?.toFixed(1) + '%',
-      errorRate: errorRate?.toFixed(1) + '%',
-      stopReason: safety.stopReason,
-    });
-
-    return new Response(
-      JSON.stringify({
-        success: !safety.stopReason,
-        jobId,
-        stats: {
-          pagesProcessed: stats.pages,
-          listingsFound: stats.found,
-          listingsNew: stats.new,
-          listingsUpdated: stats.updated,
-          listingsGone: stats.gone,
-          errorsCount: stats.errors,
-        },
-        safety: {
-          creditsUsed: totalCreditsThisJob,
-          parseSuccessRate,
-          errorRate,
-          stopReason: safety.stopReason,
-        },
-        duration: durationSeconds,
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    // Update daily credit usage
+    await updateDailyCreditUsage(
+      supabase,
+      'gaspedaal',
+      safety.creditsUsedThisRun,
+      safety.indexRequests,
+      safety.detailRequests
     );
 
+    const result = {
+      success: true,
+      jobId,
+      mode,
+      duration: durationSeconds,
+      stats: {
+        ...stats,
+        creditsUsed: safety.creditsUsedThisRun,
+        indexRequests: safety.indexRequests,
+        detailRequests: safety.detailRequests,
+        parseSuccessRate: (parseSuccessRate * 100).toFixed(1) + '%',
+        errorRate: (errorRate * 100).toFixed(1) + '%',
+      },
+      stopReason: safety.stopReason,
+    };
+
+    console.log('Job completed:', JSON.stringify(result));
+
+    return new Response(JSON.stringify(result), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   } catch (error) {
-    console.error('Discovery job error:', error);
-    
-    const durationSeconds = Math.round((Date.now() - startTime) / 1000);
-    
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Fatal error in gaspedaal-discovery:', error);
+
+    // Try to update job as failed
     try {
+      const { jobId } = await req.clone().json();
       const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
       const supabase = createClient(supabaseUrl, supabaseKey);
-      
-      const { jobId } = await req.clone().json().catch(() => ({ jobId: null }));
-      
-      if (jobId) {
-        await supabase
-          .from('scraper_jobs')
-          .update({
-            status: 'failed',
-            completed_at: new Date().toISOString(),
-            duration_seconds: durationSeconds,
-            errors_count: stats.errors + 1,
-            error_log: [
-              ...errorLog,
-              {
-                timestamp: new Date().toISOString(),
-                message: error instanceof Error ? error.message : 'Unknown error',
-              },
-            ],
-            credits_used: safety.sitemapRequests + safety.detailRequests,
-            stop_reason: error instanceof Error ? error.message : 'Unknown error',
-          })
-          .eq('id', jobId);
-      }
-    } catch (updateError) {
-      console.error('Failed to update job status:', updateError);
+
+      await supabase
+        .from('scraper_jobs')
+        .update({
+          status: 'failed',
+          completed_at: new Date().toISOString(),
+          duration_seconds: Math.floor((Date.now() - startTime) / 1000),
+          stop_reason: errorMessage,
+          error_log: [{
+            timestamp: new Date().toISOString(),
+            message: errorMessage,
+          }],
+        })
+        .eq('id', jobId);
+    } catch {
+      // Ignore cleanup errors
     }
 
     return new Response(
-      JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+      JSON.stringify({ 
+        success: false, 
+        error: errorMessage,
         stats,
-        safety: {
-          creditsUsed: safety.sitemapRequests + safety.detailRequests,
-          stopReason: error instanceof Error ? error.message : 'Unknown error',
-        },
       }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }
     );
   }
 });
