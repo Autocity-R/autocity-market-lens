@@ -142,9 +142,9 @@ export function GaspedaalControlPanel() {
             </div>
           </div>
           <div className="p-3 rounded-lg bg-muted/50">
-            <p className="text-xs text-muted-foreground">Gone</p>
+            <p className="text-xs text-muted-foreground">Gone/Sold</p>
             <div className="flex items-center gap-1">
-              <p className="text-xl font-semibold text-muted-foreground">{stats.goneListings.toLocaleString()}</p>
+              <p className="text-xl font-semibold text-muted-foreground">{(stats.goneSuspectedListings + stats.soldConfirmedListings).toLocaleString()}</p>
               <TrendingDown className="h-4 w-4 text-muted-foreground" />
             </div>
           </div>
@@ -167,8 +167,8 @@ export function GaspedaalControlPanel() {
               <span className="text-foreground font-medium">{formatTimeAgo(stats.lastDiscovery)}</span>
             </div>
             <div>
-              <span className="text-muted-foreground">Laatste deep sync: </span>
-              <span className="text-foreground font-medium">{formatTimeAgo(stats.lastDeepSync)}</span>
+              <span className="text-muted-foreground">Laatste lifecycle check: </span>
+              <span className="text-foreground font-medium">{formatTimeAgo(stats.lastLifecycleCheck)}</span>
             </div>
           </div>
         </div>
