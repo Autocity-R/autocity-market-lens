@@ -20,6 +20,12 @@ function transformMockListing(listing: typeof mockListings[0]): ScraperListing {
     fuelType: listing.fuelType,
     transmission: listing.transmission,
     powerPk: null,
+    bodyType: null,
+    color: null,
+    doors: null,
+    registrationDate: null,
+    licensePlate: null,
+    optionsRaw: null,
     dealerId: listing.dealerId,
     dealerName: listing.dealer,
     dealerCity: null,
@@ -51,6 +57,12 @@ function transformDBListing(row: {
   fuel_type: string | null;
   transmission: string | null;
   power_pk: number | null;
+  body_type: string | null;
+  color: string | null;
+  doors: number | null;
+  registration_date: string | null;
+  license_plate: string | null;
+  options_raw: string | null;
   dealer_id: string | null;
   dealer_name: string | null;
   dealer_city: string | null;
@@ -81,6 +93,12 @@ function transformDBListing(row: {
     fuelType: row.fuel_type,
     transmission: row.transmission,
     powerPk: row.power_pk,
+    bodyType: row.body_type,
+    color: row.color,
+    doors: row.doors,
+    registrationDate: row.registration_date,
+    licensePlate: row.license_plate,
+    optionsRaw: row.options_raw,
     dealerId: row.dealer_id,
     dealerName: row.dealer_name,
     dealerCity: row.dealer_city,

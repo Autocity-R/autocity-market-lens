@@ -102,25 +102,31 @@ export type Database = {
       }
       listings: {
         Row: {
+          body_type: string | null
+          color: string | null
           content_hash: string | null
           courantheid_score: number | null
           courantheid_trend: string | null
           dealer_city: string | null
           dealer_id: string | null
           dealer_name: string | null
+          doors: number | null
           first_seen_at: string
           fuel_type: string | null
           id: string
           is_normalized: boolean | null
           last_seen_at: string
+          license_plate: string | null
           make: string | null
           mileage: number | null
           model: string | null
           normalization_confidence: number | null
+          options_raw: string | null
           power_pk: number | null
           previous_price: number | null
           price: number | null
           raw_listing_id: string | null
+          registration_date: string | null
           sitemap_lastmod: string | null
           source: string
           status: string
@@ -131,25 +137,31 @@ export type Database = {
           year: number | null
         }
         Insert: {
+          body_type?: string | null
+          color?: string | null
           content_hash?: string | null
           courantheid_score?: number | null
           courantheid_trend?: string | null
           dealer_city?: string | null
           dealer_id?: string | null
           dealer_name?: string | null
+          doors?: number | null
           first_seen_at?: string
           fuel_type?: string | null
           id?: string
           is_normalized?: boolean | null
           last_seen_at?: string
+          license_plate?: string | null
           make?: string | null
           mileage?: number | null
           model?: string | null
           normalization_confidence?: number | null
+          options_raw?: string | null
           power_pk?: number | null
           previous_price?: number | null
           price?: number | null
           raw_listing_id?: string | null
+          registration_date?: string | null
           sitemap_lastmod?: string | null
           source: string
           status?: string
@@ -160,25 +172,31 @@ export type Database = {
           year?: number | null
         }
         Update: {
+          body_type?: string | null
+          color?: string | null
           content_hash?: string | null
           courantheid_score?: number | null
           courantheid_trend?: string | null
           dealer_city?: string | null
           dealer_id?: string | null
           dealer_name?: string | null
+          doors?: number | null
           first_seen_at?: string
           fuel_type?: string | null
           id?: string
           is_normalized?: boolean | null
           last_seen_at?: string
+          license_plate?: string | null
           make?: string | null
           mileage?: number | null
           model?: string | null
           normalization_confidence?: number | null
+          options_raw?: string | null
           power_pk?: number | null
           previous_price?: number | null
           price?: number | null
           raw_listing_id?: string | null
+          registration_date?: string | null
           sitemap_lastmod?: string | null
           source?: string
           status?: string
@@ -270,10 +288,13 @@ export type Database = {
           delay_between_requests_ms: number | null
           discovery_frequency_minutes: number | null
           enabled: boolean | null
+          error_rate_threshold: number | null
           gone_after_consecutive_misses: number | null
           id: string
+          max_credits_per_day: number | null
           max_listings_per_run: number | null
           max_pages_per_run: number | null
+          parse_quality_threshold: number | null
           paused: boolean | null
           source: string
           updated_at: string | null
@@ -282,10 +303,13 @@ export type Database = {
           delay_between_requests_ms?: number | null
           discovery_frequency_minutes?: number | null
           enabled?: boolean | null
+          error_rate_threshold?: number | null
           gone_after_consecutive_misses?: number | null
           id?: string
+          max_credits_per_day?: number | null
           max_listings_per_run?: number | null
           max_pages_per_run?: number | null
+          parse_quality_threshold?: number | null
           paused?: boolean | null
           source: string
           updated_at?: string | null
@@ -294,13 +318,52 @@ export type Database = {
           delay_between_requests_ms?: number | null
           discovery_frequency_minutes?: number | null
           enabled?: boolean | null
+          error_rate_threshold?: number | null
           gone_after_consecutive_misses?: number | null
           id?: string
+          max_credits_per_day?: number | null
           max_listings_per_run?: number | null
           max_pages_per_run?: number | null
+          parse_quality_threshold?: number | null
           paused?: boolean | null
           source?: string
           updated_at?: string | null
+        }
+        Relationships: []
+      }
+      scraper_credit_usage: {
+        Row: {
+          created_at: string
+          credits_used: number
+          date: string
+          detail_requests: number | null
+          id: string
+          jobs_count: number | null
+          sitemap_requests: number | null
+          source: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          credits_used?: number
+          date?: string
+          detail_requests?: number | null
+          id?: string
+          jobs_count?: number | null
+          sitemap_requests?: number | null
+          source: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          credits_used?: number
+          date?: string
+          detail_requests?: number | null
+          id?: string
+          jobs_count?: number | null
+          sitemap_requests?: number | null
+          source?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -308,8 +371,11 @@ export type Database = {
         Row: {
           completed_at: string | null
           created_at: string
+          credits_used: number | null
+          detail_requests: number | null
           duration_seconds: number | null
           error_log: Json | null
+          error_rate: number | null
           errors_count: number | null
           id: string
           job_type: string
@@ -318,16 +384,22 @@ export type Database = {
           listings_new: number | null
           listings_updated: number | null
           pages_processed: number | null
+          parse_success_rate: number | null
+          sitemap_requests: number | null
           source: string
           started_at: string | null
           status: string
+          stop_reason: string | null
           triggered_by: string | null
         }
         Insert: {
           completed_at?: string | null
           created_at?: string
+          credits_used?: number | null
+          detail_requests?: number | null
           duration_seconds?: number | null
           error_log?: Json | null
+          error_rate?: number | null
           errors_count?: number | null
           id?: string
           job_type: string
@@ -336,16 +408,22 @@ export type Database = {
           listings_new?: number | null
           listings_updated?: number | null
           pages_processed?: number | null
+          parse_success_rate?: number | null
+          sitemap_requests?: number | null
           source: string
           started_at?: string | null
           status?: string
+          stop_reason?: string | null
           triggered_by?: string | null
         }
         Update: {
           completed_at?: string | null
           created_at?: string
+          credits_used?: number | null
+          detail_requests?: number | null
           duration_seconds?: number | null
           error_log?: Json | null
+          error_rate?: number | null
           errors_count?: number | null
           id?: string
           job_type?: string
@@ -354,9 +432,12 @@ export type Database = {
           listings_new?: number | null
           listings_updated?: number | null
           pages_processed?: number | null
+          parse_success_rate?: number | null
+          sitemap_requests?: number | null
           source?: string
           started_at?: string | null
           status?: string
+          stop_reason?: string | null
           triggered_by?: string | null
         }
         Relationships: []
