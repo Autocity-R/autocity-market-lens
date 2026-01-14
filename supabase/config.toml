@@ -11,3 +11,9 @@ verify_jwt = false
 
 [functions.analyze-dealer]
 verify_jwt = false
+
+[functions.rdw-lookup]
+verify_jwt = false
+
+[functions.vehicle-values]
+verify_jwt = false

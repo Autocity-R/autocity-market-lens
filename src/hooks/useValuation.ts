@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 
 export interface ValuationRequest {
+  licensePlate?: string;
   make: string;
   model: string;
   year: number;
@@ -9,8 +10,11 @@ export interface ValuationRequest {
   fuelType: string;
   transmission?: string;
   bodyType?: string;
+  power?: {
+    kw?: number;
+    hp?: number;
+  };
   options?: string[];
-  condition?: 'excellent' | 'good' | 'fair' | 'poor';
 }
 
 export interface Comparable {

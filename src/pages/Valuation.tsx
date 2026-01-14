@@ -6,8 +6,13 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { CourantheidBadge } from '@/components/shared/CourantheidBadge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Toggle } from '@/components/ui/toggle';
 import { useValuation, ValuationRequest, ValuationResult } from '@/hooks/useValuation';
+import { useVehicleMakes, useVehicleModels, useVehicleFuels, useVehicleTransmissions, useVehicleBodyTypes, useVehicleYears } from '@/hooks/useVehicleValues';
+import { RdwVehicle } from '@/hooks/useRdwLookup';
+import { LicensePlateInput } from '@/components/valuation/LicensePlateInput';
+import { OptionsSelector } from '@/components/valuation/OptionsSelector';
 import {
   Select,
   SelectContent,
@@ -16,61 +21,33 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
-  TrendingDown,
-  TrendingUp,
-  BarChart3,
-  Download,
   Car,
   Clock,
-  Users,
-  Layers,
   Loader2,
   CheckCircle,
   AlertCircle,
   Sparkles,
+  CreditCard,
+  Wrench,
+  Download,
+  Layers,
+  Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
-const brandOptions = [
-  { value: 'Volkswagen', label: 'Volkswagen' },
-  { value: 'BMW', label: 'BMW' },
-  { value: 'Mercedes-Benz', label: 'Mercedes-Benz' },
-  { value: 'Audi', label: 'Audi' },
-  { value: 'Toyota', label: 'Toyota' },
-  { value: 'Tesla', label: 'Tesla' },
-  { value: 'Volvo', label: 'Volvo' },
-  { value: 'Peugeot', label: 'Peugeot' },
-  { value: 'Renault', label: 'Renault' },
-  { value: 'Ford', label: 'Ford' },
-  { value: 'Opel', label: 'Opel' },
-  { value: 'Kia', label: 'Kia' },
-  { value: 'Hyundai', label: 'Hyundai' },
-];
-
-const fuelOptions = [
-  { value: 'benzine', label: 'Benzine' },
-  { value: 'diesel', label: 'Diesel' },
-  { value: 'elektrisch', label: 'Elektrisch' },
-  { value: 'hybride', label: 'Hybride' },
-  { value: 'plug-in hybride', label: 'Plug-in Hybride' },
-];
-
-const transmissionOptions = [
-  { value: 'automaat', label: 'Automaat' },
-  { value: 'handgeschakeld', label: 'Handgeschakeld' },
-];
-
-const conditionOptions = [
-  { value: 'excellent', label: 'Uitstekend' },
-  { value: 'good', label: 'Goed' },
-  { value: 'fair', label: 'Redelijk' },
-  { value: 'poor', label: 'Matig' },
-];
-
 export default function Valuation() {
   const valuation = useValuation();
   const [result, setResult] = useState<ValuationResult | null>(null);
+  const [powerUnit, setPowerUnit] = useState<'hp' | 'kw'>('hp');
+  const [activeTab, setActiveTab] = useState<'kenteken' | 'handmatig'>('kenteken');
+  
+  // Vehicle values data
+  const { data: makes, isLoading: makesLoading } = useVehicleMakes();
+  const { data: fuels } = useVehicleFuels();
+  const { data: transmissions } = useVehicleTransmissions();
+  const { data: bodyTypes } = useVehicleBodyTypes();
+  const { data: years } = useVehicleYears();
   
   // Form state
   const [formData, setFormData] = useState<ValuationRequest>({
@@ -80,17 +57,66 @@ export default function Valuation() {
     mileage: 50000,
     fuelType: '',
     transmission: '',
-    condition: 'good',
+    bodyType: '',
+    power: undefined,
     options: [],
   });
 
+  // Fetch models based on selected make
+  const { data: models, isLoading: modelsLoading } = useVehicleModels(formData.make || undefined);
+
   const handleInputChange = (field: keyof ValuationRequest, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+    
+    // Reset model when make changes
+    if (field === 'make') {
+      setFormData(prev => ({ ...prev, model: '', options: [] }));
+    }
+  };
+
+  const handlePowerChange = (value: string) => {
+    const numValue = parseInt(value) || 0;
+    if (powerUnit === 'hp') {
+      setFormData(prev => ({
+        ...prev,
+        power: { hp: numValue, kw: Math.round(numValue * 0.7355) },
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        power: { kw: numValue, hp: Math.round(numValue / 0.7355) },
+      }));
+    }
+  };
+
+  const handleOptionsChange = (options: string[]) => {
+    setFormData(prev => ({ ...prev, options }));
+  };
+
+  const handleRdwVehicleFound = (vehicle: RdwVehicle) => {
+    setFormData({
+      licensePlate: vehicle.licensePlate,
+      make: vehicle.make,
+      model: vehicle.model,
+      year: vehicle.year,
+      mileage: 0, // User needs to fill this in
+      fuelType: vehicle.fuelType,
+      transmission: vehicle.transmission,
+      bodyType: vehicle.bodyType,
+      power: vehicle.power,
+      options: [],
+    });
+    setActiveTab('handmatig'); // Switch to manual tab to complete details
   };
 
   const handleAnalyze = async () => {
     if (!formData.make || !formData.model || !formData.fuelType) {
       toast.error('Vul merk, model en brandstof in');
+      return;
+    }
+
+    if (!formData.mileage || formData.mileage === 0) {
+      toast.error('Vul de kilometerstand in');
       return;
     }
 
@@ -110,152 +136,251 @@ export default function Valuation() {
     >
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Input Form */}
-        <div className="lg:col-span-1">
+        <div className="lg:col-span-1 space-y-4">
           <Card className="bg-card border-border">
-            <CardHeader>
+            <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-lg">
                 <Sparkles className="h-5 w-5 text-primary" />
-                Voertuiggegevens
+                Voertuig Invoeren
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Make */}
-              <div>
-                <Label className="text-xs text-muted-foreground">Merk *</Label>
-                <Select 
-                  value={formData.make} 
-                  onValueChange={(v) => handleInputChange('make', v)}
-                >
-                  <SelectTrigger className="mt-1 bg-muted border-border">
-                    <SelectValue placeholder="Selecteer merk" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {brandOptions.map((brand) => (
-                      <SelectItem key={brand.value} value={brand.value}>
-                        {brand.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            <CardContent>
+              <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
+                <TabsList className="grid w-full grid-cols-2 mb-4">
+                  <TabsTrigger value="kenteken" className="gap-2">
+                    <CreditCard className="h-4 w-4" />
+                    Kenteken
+                  </TabsTrigger>
+                  <TabsTrigger value="handmatig" className="gap-2">
+                    <Wrench className="h-4 w-4" />
+                    Handmatig
+                  </TabsTrigger>
+                </TabsList>
 
-              {/* Model */}
-              <div>
-                <Label className="text-xs text-muted-foreground">Model *</Label>
-                <Input
-                  value={formData.model}
-                  onChange={(e) => handleInputChange('model', e.target.value)}
-                  placeholder="bijv. Golf, 3 Serie, A4"
-                  className="mt-1 bg-muted border-border"
-                />
-              </div>
+                <TabsContent value="kenteken" className="mt-0">
+                  <LicensePlateInput onVehicleFound={handleRdwVehicleFound} />
+                </TabsContent>
 
-              {/* Year */}
-              <div>
-                <Label className="text-xs text-muted-foreground">Bouwjaar</Label>
-                <Input
-                  type="number"
-                  value={formData.year}
-                  onChange={(e) => handleInputChange('year', parseInt(e.target.value))}
-                  min={2010}
-                  max={new Date().getFullYear()}
-                  className="mt-1 bg-muted border-border"
-                />
-              </div>
+                <TabsContent value="handmatig" className="mt-0 space-y-4">
+                  {/* Make */}
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Merk *</Label>
+                    <Select 
+                      value={formData.make} 
+                      onValueChange={(v) => handleInputChange('make', v)}
+                    >
+                      <SelectTrigger className="mt-1 bg-muted border-border">
+                        <SelectValue placeholder={makesLoading ? 'Laden...' : 'Selecteer merk'} />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[300px]">
+                        {makes?.map((make) => (
+                          <SelectItem key={make} value={make}>
+                            {make}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-              {/* Mileage */}
-              <div>
-                <Label className="text-xs text-muted-foreground">Kilometerstand</Label>
-                <Input
-                  type="number"
-                  value={formData.mileage}
-                  onChange={(e) => handleInputChange('mileage', parseInt(e.target.value))}
-                  min={0}
-                  step={1000}
-                  className="mt-1 bg-muted border-border"
-                />
-              </div>
+                  {/* Model */}
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Model *</Label>
+                    <Select 
+                      value={formData.model} 
+                      onValueChange={(v) => handleInputChange('model', v)}
+                      disabled={!formData.make}
+                    >
+                      <SelectTrigger className="mt-1 bg-muted border-border">
+                        <SelectValue placeholder={
+                          !formData.make 
+                            ? 'Selecteer eerst merk' 
+                            : modelsLoading 
+                              ? 'Laden...' 
+                              : 'Selecteer model'
+                        } />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[300px]">
+                        {models?.map((model) => (
+                          <SelectItem key={model} value={model}>
+                            {model}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-              {/* Fuel Type */}
-              <div>
-                <Label className="text-xs text-muted-foreground">Brandstof *</Label>
-                <Select 
-                  value={formData.fuelType} 
-                  onValueChange={(v) => handleInputChange('fuelType', v)}
-                >
-                  <SelectTrigger className="mt-1 bg-muted border-border">
-                    <SelectValue placeholder="Selecteer brandstof" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {fuelOptions.map((fuel) => (
-                      <SelectItem key={fuel.value} value={fuel.value}>
-                        {fuel.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                  {/* Year */}
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Bouwjaar *</Label>
+                    <Select 
+                      value={formData.year.toString()} 
+                      onValueChange={(v) => handleInputChange('year', parseInt(v))}
+                    >
+                      <SelectTrigger className="mt-1 bg-muted border-border">
+                        <SelectValue placeholder="Selecteer bouwjaar" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[300px]">
+                        {years?.map((year) => (
+                          <SelectItem key={year} value={year.toString()}>
+                            {year}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-              {/* Transmission */}
-              <div>
-                <Label className="text-xs text-muted-foreground">Transmissie</Label>
-                <Select 
-                  value={formData.transmission} 
-                  onValueChange={(v) => handleInputChange('transmission', v)}
-                >
-                  <SelectTrigger className="mt-1 bg-muted border-border">
-                    <SelectValue placeholder="Selecteer transmissie" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {transmissionOptions.map((t) => (
-                      <SelectItem key={t.value} value={t.value}>
-                        {t.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                  {/* Mileage */}
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Kilometerstand *</Label>
+                    <Input
+                      type="number"
+                      value={formData.mileage || ''}
+                      onChange={(e) => handleInputChange('mileage', parseInt(e.target.value) || 0)}
+                      placeholder="bijv. 75000"
+                      min={0}
+                      step={1000}
+                      className="mt-1 bg-muted border-border"
+                    />
+                  </div>
 
-              {/* Condition */}
-              <div>
-                <Label className="text-xs text-muted-foreground">Conditie</Label>
-                <Select 
-                  value={formData.condition} 
-                  onValueChange={(v) => handleInputChange('condition', v as any)}
-                >
-                  <SelectTrigger className="mt-1 bg-muted border-border">
-                    <SelectValue placeholder="Selecteer conditie" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {conditionOptions.map((c) => (
-                      <SelectItem key={c.value} value={c.value}>
-                        {c.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                  {/* Fuel Type */}
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Brandstof *</Label>
+                    <Select 
+                      value={formData.fuelType} 
+                      onValueChange={(v) => handleInputChange('fuelType', v)}
+                    >
+                      <SelectTrigger className="mt-1 bg-muted border-border">
+                        <SelectValue placeholder="Selecteer brandstof" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {fuels?.map((fuel) => (
+                          <SelectItem key={fuel} value={fuel}>
+                            {fuel}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-              {/* Action Button */}
-              <Button 
-                className="w-full mt-4" 
-                onClick={handleAnalyze}
-                disabled={valuation.isPending}
-              >
-                {valuation.isPending ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Analyseren...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-4 w-4 mr-2" />
-                    Taxeer met AI
-                  </>
-                )}
-              </Button>
+                  {/* Transmission */}
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Transmissie</Label>
+                    <Select 
+                      value={formData.transmission} 
+                      onValueChange={(v) => handleInputChange('transmission', v)}
+                    >
+                      <SelectTrigger className="mt-1 bg-muted border-border">
+                        <SelectValue placeholder="Selecteer transmissie" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {transmissions?.map((t) => (
+                          <SelectItem key={t} value={t}>
+                            {t}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Body Type */}
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Carrosserie</Label>
+                    <Select 
+                      value={formData.bodyType} 
+                      onValueChange={(v) => handleInputChange('bodyType', v)}
+                    >
+                      <SelectTrigger className="mt-1 bg-muted border-border">
+                        <SelectValue placeholder="Selecteer carrosserie" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {bodyTypes?.map((bt) => (
+                          <SelectItem key={bt} value={bt}>
+                            {bt}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Power */}
+                  <div>
+                    <Label className="text-xs text-muted-foreground">Vermogen</Label>
+                    <div className="flex gap-2 mt-1">
+                      <Input
+                        type="number"
+                        value={powerUnit === 'hp' ? (formData.power?.hp || '') : (formData.power?.kw || '')}
+                        onChange={(e) => handlePowerChange(e.target.value)}
+                        placeholder={powerUnit === 'hp' ? 'bijv. 150' : 'bijv. 110'}
+                        min={0}
+                        className="bg-muted border-border flex-1"
+                      />
+                      <div className="flex rounded-md border border-border overflow-hidden">
+                        <Toggle
+                          pressed={powerUnit === 'hp'}
+                          onPressedChange={() => setPowerUnit('hp')}
+                          className="rounded-none border-0 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+                        >
+                          PK
+                        </Toggle>
+                        <Toggle
+                          pressed={powerUnit === 'kw'}
+                          onPressedChange={() => setPowerUnit('kw')}
+                          className="rounded-none border-0 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+                        >
+                          kW
+                        </Toggle>
+                      </div>
+                    </div>
+                  </div>
+                </TabsContent>
+              </Tabs>
             </CardContent>
           </Card>
+
+          {/* Options Card */}
+          {activeTab === 'handmatig' && formData.make && (
+            <Card className="bg-card border-border">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Zap className="h-4 w-4 text-primary" />
+                  Waardevolle Opties
+                  {formData.options && formData.options.length > 0 && (
+                    <Badge variant="default" className="ml-auto">
+                      {formData.options.length} geselecteerd
+                    </Badge>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <OptionsSelector
+                  make={formData.make}
+                  selectedOptions={formData.options || []}
+                  onOptionsChange={handleOptionsChange}
+                />
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Analyze Button */}
+          <Button 
+            className="w-full" 
+            size="lg"
+            onClick={handleAnalyze}
+            disabled={valuation.isPending || !formData.make || !formData.model || !formData.fuelType}
+          >
+            {valuation.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Analyseren...
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4 mr-2" />
+                Taxeer Voertuig
+              </>
+            )}
+          </Button>
         </div>
 
         {/* Results */}
@@ -267,8 +392,8 @@ export default function Valuation() {
                 <Car className="h-16 w-16 mx-auto text-muted-foreground/30 mb-4" />
                 <h3 className="text-lg font-medium mb-2">Voer voertuiggegevens in</h3>
                 <p className="text-muted-foreground">
-                  Vul de gegevens in het formulier in om een AI-gedreven taxatie te ontvangen 
-                  gebaseerd op actuele marktdata.
+                  Gebruik een kenteken of voer handmatig de voertuiggegevens in. 
+                  Selecteer waardevolle opties voor een nauwkeurigere taxatie.
                 </p>
               </CardContent>
             </Card>
@@ -281,7 +406,7 @@ export default function Valuation() {
                 <Loader2 className="h-12 w-12 mx-auto text-primary animate-spin mb-4" />
                 <h3 className="text-lg font-medium mb-2">Markt analyseren...</h3>
                 <p className="text-muted-foreground">
-                  We vergelijken met {formData.make} {formData.model} listings in de database...
+                  We vergelijken {formData.make} {formData.model} met vergelijkbare voertuigen...
                 </p>
               </CardContent>
             </Card>
@@ -319,8 +444,14 @@ export default function Valuation() {
                         </h3>
                       </div>
                       <p className="text-sm text-muted-foreground">
-                        {formData.mileage.toLocaleString()} km • {formData.fuelType} • {formData.transmission || 'Onbekend'}
+                        {formData.mileage?.toLocaleString()} km • {formData.fuelType} • {formData.transmission || 'Onbekend'}
+                        {formData.power?.hp && ` • ${formData.power.hp} PK`}
                       </p>
+                      {formData.options && formData.options.length > 0 && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {formData.options.length} opties geselecteerd
+                        </p>
+                      )}
                     </div>
                     <Button variant="outline" size="sm">
                       <Download className="h-4 w-4 mr-1" />
@@ -434,10 +565,9 @@ export default function Valuation() {
                             </p>
                             <p className={cn(
                               'text-xs',
-                              comp.daysOnMarket <= 20 ? 'text-success' : 
-                              comp.daysOnMarket <= 40 ? 'text-warning' : 'text-destructive'
+                              comp.isSold ? 'text-success' : 'text-muted-foreground'
                             )}>
-                              {comp.daysOnMarket} dagen {comp.isSold ? 'tot verkoop' : 'online'}
+                              {comp.isSold ? `Verkocht na ${comp.daysOnMarket}d` : `${comp.daysOnMarket}d actief`}
                             </p>
                           </div>
                         </div>
