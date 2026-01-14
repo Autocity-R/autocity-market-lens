@@ -17,15 +17,19 @@ export interface RawScrapedListing {
     transmissie: string | null;
     vermogen: string | null;
     carrosserie: string | null;
+    kleur: string | null;
+    deuren: string | null;
+    kenteken: string | null;
+    opties: string | null;
   };
 
   dealer: {
     name: string | null;
     city: string | null;
-    dealer_page_url: string | null;  // HARD KEY for matching
+    dealer_page_url: string | null;
   };
 
-  content_hash: string;  // hash(title+price+mileage+year+dealer_name)
+  content_hash: string;
 }
 
 // ===== LISTING (Current State - UI Model) =====
@@ -46,6 +50,14 @@ export interface ScraperListing {
   fuelType: string | null;
   transmission: string | null;
   powerPk: number | null;
+  
+  // Enhanced vehicle data
+  bodyType: string | null;
+  color: string | null;
+  doors: number | null;
+  registrationDate: string | null;
+  licensePlate: string | null;
+  optionsRaw: string | null;
   
   // Dealer
   dealerId: string | null;
@@ -129,6 +141,14 @@ export interface ScraperJob {
     errorsCount: number;
   };
   
+  // Safety/Quality metrics
+  creditsUsed: number | null;
+  sitemapRequests: number | null;
+  detailRequests: number | null;
+  parseSuccessRate: number | null;
+  errorRate: number | null;
+  stopReason: string | null;
+  
   errorLog: Array<{
     timestamp: string;
     message: string;
@@ -150,6 +170,11 @@ export interface ScraperConfig {
   maxListingsPerRun: number;
   delayBetweenRequestsMs: number;
   goneAfterConsecutiveMisses: number;
+  
+  // Safety limits
+  maxCreditsPerDay: number;
+  errorRateThreshold: number;
+  parseQualityThreshold: number;
 }
 
 // ===== SCRAPER STATUS RESPONSE =====
@@ -163,6 +188,22 @@ export interface ScraperStatusResponse {
     lastDiscovery: string | null;
     lastDeepSync: string | null;
   };
+  creditUsage: {
+    today: number;
+    limit: number;
+    percentage: number;
+  };
+}
+
+// ===== CREDIT USAGE =====
+export interface ScraperCreditUsage {
+  id: string;
+  date: string;
+  source: string;
+  creditsUsed: number;
+  sitemapRequests: number;
+  detailRequests: number;
+  jobsCount: number;
 }
 
 // ===== LISTINGS RESPONSE =====
@@ -184,4 +225,6 @@ export interface ListingsFilters {
   mileageTo?: number;
   fuelType?: string[];
   transmission?: string;
+  bodyType?: string;
+  color?: string;
 }
