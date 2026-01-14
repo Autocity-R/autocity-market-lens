@@ -1,8 +1,12 @@
+import { useState } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
+import { CourantheidBadge } from '@/components/shared/CourantheidBadge';
+import { useValuation, ValuationRequest } from '@/hooks/useValuation';
 import {
   Select,
   SelectContent,
@@ -10,6 +14,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import {
   AlertTriangle,
   TrendingUp,
@@ -20,10 +31,40 @@ import {
   Bell,
   Plus,
   Settings,
+  Upload,
+  Loader2,
+  CheckCircle,
+  XCircle,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
+
+interface InventoryItem {
+  id: string;
+  title: string;
+  make: string;
+  model: string;
+  year: number;
+  mileage: number;
+  price: number;
+  fuelType: string;
+  daysOnMarket: number;
+  status: 'good' | 'warning' | 'critical';
+  marketPosition?: number; // -5 to +5 (% vs market)
+  estimatedValue?: number;
+  courantheid?: number;
+}
 
 // Mock inventory data
+const initialInventory: InventoryItem[] = [
+  { id: '1', title: 'VW Golf 1.4 TSI Highline', make: 'Volkswagen', model: 'Golf', year: 2021, mileage: 45000, price: 24950, fuelType: 'benzine', daysOnMarket: 23, status: 'good', marketPosition: -2.3, courantheid: 85 },
+  { id: '2', title: 'BMW 320i M Sport', make: 'BMW', model: '3 Serie', year: 2020, mileage: 62000, price: 32500, fuelType: 'benzine', daysOnMarket: 45, status: 'warning', marketPosition: 4.5, courantheid: 72 },
+  { id: '3', title: 'Mercedes C 180', make: 'Mercedes-Benz', model: 'C-Klasse', year: 2019, mileage: 78000, price: 28750, fuelType: 'benzine', daysOnMarket: 67, status: 'critical', marketPosition: 3.2, courantheid: 58 },
+  { id: '4', title: 'Audi A4 35 TFSI', make: 'Audi', model: 'A4', year: 2022, mileage: 28000, price: 38900, fuelType: 'benzine', daysOnMarket: 12, status: 'good', marketPosition: -1.1, courantheid: 91 },
+  { id: '5', title: 'Toyota RAV4 Hybrid', make: 'Toyota', model: 'RAV4', year: 2021, mileage: 52000, price: 36250, fuelType: 'hybride', daysOnMarket: 8, status: 'good', marketPosition: -0.5, courantheid: 88 },
+];
+
 const inventoryAlerts = [
   {
     id: 1,
@@ -49,62 +90,216 @@ const inventoryAlerts = [
     severity: 'warning',
     suggestion: 'AutoVandaag Amsterdam heeft vergelijkbaar aanbod',
   },
-  {
-    id: 4,
-    type: 'segment_down',
-    vehicle: 'Audi A4 35 TFSI 2022',
-    message: 'Segment daalt: -3.2% afgelopen week',
-    severity: 'info',
-    suggestion: 'Monitor prijsontwikkeling, overweeg tijdige verkoop',
-  },
-];
-
-const inventoryStats = {
-  totalVehicles: 47,
-  avgDaysOnMarket: 28,
-  avgPriceVsMarket: 1.8,
-  alertsCount: 4,
-  atRisk: 6,
-  performing: 28,
-  underperforming: 13,
-};
-
-const ownInventory = [
-  { id: 1, title: 'VW Golf 1.4 TSI Highline', year: 2021, km: 45000, price: 24950, days: 23, status: 'good', vsMarket: -2.3 },
-  { id: 2, title: 'BMW 320i M Sport', year: 2020, km: 62000, price: 32500, days: 45, status: 'warning', vsMarket: 4.5 },
-  { id: 3, title: 'Mercedes C 180', year: 2019, km: 78000, price: 28750, days: 67, status: 'critical', vsMarket: 3.2 },
-  { id: 4, title: 'Audi A4 35 TFSI', year: 2022, km: 28000, price: 38900, days: 12, status: 'good', vsMarket: -1.1 },
-  { id: 5, title: 'Toyota RAV4 Hybrid', year: 2021, km: 52000, price: 36250, days: 8, status: 'good', vsMarket: -0.5 },
 ];
 
 export default function Inventory() {
+  const [inventory, setInventory] = useState<InventoryItem[]>(initialInventory);
+  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [selectedVehicle, setSelectedVehicle] = useState<InventoryItem | null>(null);
+  const [analyzingId, setAnalyzingId] = useState<string | null>(null);
+  
+  const valuation = useValuation();
+
+  // New vehicle form state
+  const [newVehicle, setNewVehicle] = useState({
+    make: '',
+    model: '',
+    year: new Date().getFullYear() - 2,
+    mileage: 50000,
+    price: 25000,
+    fuelType: 'benzine',
+  });
+
+  const stats = {
+    totalVehicles: inventory.length,
+    avgDaysOnMarket: Math.round(inventory.reduce((acc, v) => acc + v.daysOnMarket, 0) / inventory.length),
+    avgPriceVsMarket: inventory.reduce((acc, v) => acc + (v.marketPosition || 0), 0) / inventory.length,
+    performing: inventory.filter(v => v.status === 'good').length,
+    atRisk: inventory.filter(v => v.status === 'critical').length,
+    warning: inventory.filter(v => v.status === 'warning').length,
+  };
+
+  const handleAddVehicle = () => {
+    const newItem: InventoryItem = {
+      id: Date.now().toString(),
+      title: `${newVehicle.make} ${newVehicle.model}`,
+      make: newVehicle.make,
+      model: newVehicle.model,
+      year: newVehicle.year,
+      mileage: newVehicle.mileage,
+      price: newVehicle.price,
+      fuelType: newVehicle.fuelType,
+      daysOnMarket: 0,
+      status: 'good',
+    };
+    
+    setInventory([newItem, ...inventory]);
+    setIsAddDialogOpen(false);
+    toast.success('Voertuig toegevoegd');
+    
+    // Reset form
+    setNewVehicle({
+      make: '',
+      model: '',
+      year: new Date().getFullYear() - 2,
+      mileage: 50000,
+      price: 25000,
+      fuelType: 'benzine',
+    });
+  };
+
+  const handleAnalyzeVehicle = async (vehicle: InventoryItem) => {
+    setAnalyzingId(vehicle.id);
+    
+    try {
+      const result = await valuation.mutateAsync({
+        make: vehicle.make,
+        model: vehicle.model,
+        year: vehicle.year,
+        mileage: vehicle.mileage,
+        fuelType: vehicle.fuelType,
+      });
+
+      // Update vehicle with market data
+      setInventory(prev => prev.map(v => {
+        if (v.id === vehicle.id) {
+          const marketPosition = ((v.price - result.estimatedValue) / result.estimatedValue) * 100;
+          return {
+            ...v,
+            estimatedValue: result.estimatedValue,
+            marketPosition: Math.round(marketPosition * 10) / 10,
+            status: marketPosition > 5 ? 'critical' : marketPosition > 2 ? 'warning' : 'good',
+          };
+        }
+        return v;
+      }));
+
+      toast.success(`Marktanalyse voltooid voor ${vehicle.title}`);
+    } catch (error) {
+      toast.error('Analyse mislukt');
+    } finally {
+      setAnalyzingId(null);
+    }
+  };
+
+  const getPriceAdvice = (marketPosition: number | undefined) => {
+    if (marketPosition === undefined) return { label: 'Analyseren', color: 'text-muted-foreground' };
+    if (marketPosition < -3) return { label: 'Te goedkoop', color: 'text-info' };
+    if (marketPosition < 2) return { label: 'Marktconform', color: 'text-success' };
+    if (marketPosition < 5) return { label: 'Iets te duur', color: 'text-warning' };
+    return { label: 'Te duur', color: 'text-destructive' };
+  };
+
   return (
     <MainLayout
       title="Inventory Monitor"
-      subtitle="Monitor en optimaliseer uw voorraad"
+      subtitle="Monitor en optimaliseer uw voorraad met AI-gedreven marktanalyse"
     >
-      {/* Dealer Selector */}
-      <div className="stat-card mb-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Select defaultValue="own">
-              <SelectTrigger className="w-64 bg-muted border-border">
-                <SelectValue placeholder="Selecteer dealer" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="own">Uw dealerbedrijf</SelectItem>
-                <SelectItem value="all">Alle gekoppelde dealers</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button variant="outline" size="sm">
-              <Plus className="h-4 w-4 mr-1" />
-              Dealer toevoegen
-            </Button>
-          </div>
+      {/* Actions Bar */}
+      <div className="flex items-center justify-between mb-6 p-4 rounded-lg bg-card border border-border">
+        <div className="flex items-center gap-4">
+          <Select defaultValue="own">
+            <SelectTrigger className="w-64 bg-muted border-border">
+              <SelectValue placeholder="Selecteer dealer" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="own">Uw dealerbedrijf</SelectItem>
+              <SelectItem value="all">Alle gekoppelde dealers</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center gap-2">
           <Button variant="outline" size="sm">
-            <Settings className="h-4 w-4 mr-1" />
-            Alert instellingen
+            <Upload className="h-4 w-4 mr-1" />
+            CSV Import
           </Button>
+          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm">
+                <Plus className="h-4 w-4 mr-1" />
+                Voertuig toevoegen
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Voertuig Toevoegen</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium">Merk</label>
+                    <Input
+                      value={newVehicle.make}
+                      onChange={(e) => setNewVehicle({ ...newVehicle, make: e.target.value })}
+                      placeholder="bijv. Volkswagen"
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium">Model</label>
+                    <Input
+                      value={newVehicle.model}
+                      onChange={(e) => setNewVehicle({ ...newVehicle, model: e.target.value })}
+                      placeholder="bijv. Golf"
+                      className="mt-1"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium">Bouwjaar</label>
+                    <Input
+                      type="number"
+                      value={newVehicle.year}
+                      onChange={(e) => setNewVehicle({ ...newVehicle, year: parseInt(e.target.value) })}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium">Kilometerstand</label>
+                    <Input
+                      type="number"
+                      value={newVehicle.mileage}
+                      onChange={(e) => setNewVehicle({ ...newVehicle, mileage: parseInt(e.target.value) })}
+                      className="mt-1"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium">Vraagprijs (€)</label>
+                    <Input
+                      type="number"
+                      value={newVehicle.price}
+                      onChange={(e) => setNewVehicle({ ...newVehicle, price: parseInt(e.target.value) })}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium">Brandstof</label>
+                    <Select 
+                      value={newVehicle.fuelType} 
+                      onValueChange={(v) => setNewVehicle({ ...newVehicle, fuelType: v })}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="benzine">Benzine</SelectItem>
+                        <SelectItem value="diesel">Diesel</SelectItem>
+                        <SelectItem value="elektrisch">Elektrisch</SelectItem>
+                        <SelectItem value="hybride">Hybride</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <Button className="w-full" onClick={handleAddVehicle}>
+                  <Plus className="h-4 w-4 mr-1" />
+                  Toevoegen
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
@@ -114,7 +309,7 @@ export default function Inventory() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-2xl font-bold text-foreground">{inventoryStats.totalVehicles}</p>
+                <p className="text-2xl font-bold text-foreground">{stats.totalVehicles}</p>
                 <p className="text-sm text-muted-foreground">Voertuigen</p>
               </div>
               <Car className="h-6 w-6 text-primary/50" />
@@ -125,7 +320,7 @@ export default function Inventory() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-2xl font-bold text-foreground">{inventoryStats.avgDaysOnMarket}d</p>
+                <p className="text-2xl font-bold text-foreground">{stats.avgDaysOnMarket}d</p>
                 <p className="text-sm text-muted-foreground">Gem. online</p>
               </div>
               <Clock className="h-6 w-6 text-primary/50" />
@@ -136,7 +331,13 @@ export default function Inventory() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-2xl font-bold text-warning">+{inventoryStats.avgPriceVsMarket}%</p>
+                <p className={cn(
+                  "text-2xl font-bold",
+                  stats.avgPriceVsMarket > 2 ? "text-warning" : 
+                  stats.avgPriceVsMarket < -2 ? "text-info" : "text-success"
+                )}>
+                  {stats.avgPriceVsMarket > 0 ? '+' : ''}{stats.avgPriceVsMarket.toFixed(1)}%
+                </p>
                 <p className="text-sm text-muted-foreground">vs markt</p>
               </div>
               <Euro className="h-6 w-6 text-primary/50" />
@@ -147,10 +348,10 @@ export default function Inventory() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-2xl font-bold text-success">{inventoryStats.performing}</p>
+                <p className="text-2xl font-bold text-success">{stats.performing}</p>
                 <p className="text-sm text-muted-foreground">Goed presterend</p>
               </div>
-              <TrendingUp className="h-6 w-6 text-success/50" />
+              <CheckCircle className="h-6 w-6 text-success/50" />
             </div>
           </CardContent>
         </Card>
@@ -158,7 +359,7 @@ export default function Inventory() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-2xl font-bold text-destructive">{inventoryStats.atRisk}</p>
+                <p className="text-2xl font-bold text-destructive">{stats.atRisk}</p>
                 <p className="text-sm text-muted-foreground">Actie vereist</p>
               </div>
               <AlertTriangle className="h-6 w-6 text-destructive/50" />
@@ -202,52 +403,92 @@ export default function Inventory() {
         <div className="lg:col-span-2">
           <Card className="bg-card border-border">
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg">Uw Voorraad</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg">Uw Voorraad</CardTitle>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => inventory.forEach(v => handleAnalyzeVehicle(v))}
+                  disabled={analyzingId !== null}
+                >
+                  <Sparkles className="h-4 w-4 mr-1" />
+                  Analyseer Alle
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {ownInventory.map((vehicle) => (
-                  <div
-                    key={vehicle.id}
-                    className="flex items-center justify-between p-4 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className={cn(
-                        'h-2 w-2 rounded-full',
-                        vehicle.status === 'good' ? 'bg-success' :
-                        vehicle.status === 'warning' ? 'bg-warning' : 'bg-destructive'
-                      )} />
-                      <div>
-                        <p className="text-sm font-medium text-foreground">{vehicle.title}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {vehicle.year} • {vehicle.km.toLocaleString()} km
-                        </p>
+                {inventory.map((vehicle) => {
+                  const advice = getPriceAdvice(vehicle.marketPosition);
+                  const isAnalyzing = analyzingId === vehicle.id;
+                  
+                  return (
+                    <div
+                      key={vehicle.id}
+                      className="flex items-center justify-between p-4 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className={cn(
+                          'h-3 w-3 rounded-full',
+                          vehicle.status === 'good' ? 'bg-success' :
+                          vehicle.status === 'warning' ? 'bg-warning' : 'bg-destructive'
+                        )} />
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{vehicle.title}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {vehicle.year} • {vehicle.mileage.toLocaleString()} km • {vehicle.fuelType}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        {/* Courantheid */}
+                        {vehicle.courantheid && (
+                          <CourantheidBadge score={vehicle.courantheid} compact />
+                        )}
+                        
+                        {/* Price & Market Position */}
+                        <div className="text-right min-w-[100px]">
+                          <p className="text-sm font-semibold text-foreground">
+                            €{vehicle.price.toLocaleString()}
+                          </p>
+                          {vehicle.marketPosition !== undefined ? (
+                            <p className={cn('text-xs', advice.color)}>
+                              {vehicle.marketPosition > 0 ? '+' : ''}{vehicle.marketPosition}% • {advice.label}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">Niet geanalyseerd</p>
+                          )}
+                        </div>
+
+                        {/* Days on market */}
+                        <div className="text-right min-w-[50px]">
+                          <p className={cn(
+                            'text-sm font-medium',
+                            vehicle.daysOnMarket > 60 ? 'text-destructive' :
+                            vehicle.daysOnMarket > 30 ? 'text-warning' : 'text-foreground'
+                          )}>
+                            {vehicle.daysOnMarket}d
+                          </p>
+                          <p className="text-xs text-muted-foreground">online</p>
+                        </div>
+
+                        {/* Analyze button */}
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => handleAnalyzeVehicle(vehicle)}
+                          disabled={isAnalyzing}
+                        >
+                          {isAnalyzing ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Sparkles className="h-4 w-4" />
+                          )}
+                        </Button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-6">
-                      <div className="text-right">
-                        <p className="text-sm font-semibold text-foreground">€{vehicle.price.toLocaleString()}</p>
-                        <p className={cn(
-                          'text-xs',
-                          vehicle.vsMarket < 0 ? 'trend-positive' : 'trend-negative'
-                        )}>
-                          {vehicle.vsMarket > 0 ? '+' : ''}{vehicle.vsMarket}% vs markt
-                        </p>
-                      </div>
-                      <div className="text-right min-w-[60px]">
-                        <p className={cn(
-                          'text-sm font-medium',
-                          vehicle.days > 60 ? 'text-destructive' :
-                          vehicle.days > 30 ? 'text-warning' : 'text-foreground'
-                        )}>
-                          {vehicle.days}d
-                        </p>
-                        <p className="text-xs text-muted-foreground">online</p>
-                      </div>
-                      <Button variant="ghost" size="sm">Details</Button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </CardContent>
           </Card>
