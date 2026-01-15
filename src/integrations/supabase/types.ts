@@ -169,6 +169,7 @@ export type Database = {
           doors: number | null
           first_seen_at: string
           fuel_type: string | null
+          generation: string | null
           gone_detected_at: string | null
           id: string
           is_normalized: boolean | null
@@ -180,6 +181,7 @@ export type Database = {
           mileage_bucket: number | null
           model: string | null
           normalization_confidence: number | null
+          options_parsed: string[] | null
           options_raw: string | null
           outbound_sources: string[] | null
           power_pk: number | null
@@ -210,6 +212,7 @@ export type Database = {
           doors?: number | null
           first_seen_at?: string
           fuel_type?: string | null
+          generation?: string | null
           gone_detected_at?: string | null
           id?: string
           is_normalized?: boolean | null
@@ -221,6 +224,7 @@ export type Database = {
           mileage_bucket?: number | null
           model?: string | null
           normalization_confidence?: number | null
+          options_parsed?: string[] | null
           options_raw?: string | null
           outbound_sources?: string[] | null
           power_pk?: number | null
@@ -251,6 +255,7 @@ export type Database = {
           doors?: number | null
           first_seen_at?: string
           fuel_type?: string | null
+          generation?: string | null
           gone_detected_at?: string | null
           id?: string
           is_normalized?: boolean | null
@@ -262,6 +267,7 @@ export type Database = {
           mileage_bucket?: number | null
           model?: string | null
           normalization_confidence?: number | null
+          options_parsed?: string[] | null
           options_raw?: string | null
           outbound_sources?: string[] | null
           power_pk?: number | null
@@ -342,6 +348,39 @@ export type Database = {
           trend?: string | null
           updated_at?: string | null
           window_size?: number | null
+        }
+        Relationships: []
+      }
+      option_premiums: {
+        Row: {
+          calculated_at: string | null
+          id: string
+          iqr_lower: number | null
+          iqr_upper: number | null
+          make: string
+          option_key: string
+          premium_median: number | null
+          sample_size: number | null
+        }
+        Insert: {
+          calculated_at?: string | null
+          id?: string
+          iqr_lower?: number | null
+          iqr_upper?: number | null
+          make: string
+          option_key: string
+          premium_median?: number | null
+          sample_size?: number | null
+        }
+        Update: {
+          calculated_at?: string | null
+          id?: string
+          iqr_lower?: number | null
+          iqr_upper?: number | null
+          make?: string
+          option_key?: string
+          premium_median?: number | null
+          sample_size?: number | null
         }
         Relationships: []
       }
@@ -561,6 +600,51 @@ export type Database = {
           status?: string
           stop_reason?: string | null
           triggered_by?: string | null
+        }
+        Relationships: []
+      }
+      valuation_cache: {
+        Row: {
+          avg_days_on_market: number | null
+          calculated_at: string | null
+          courantheid_score: number | null
+          fuel_type: string | null
+          id: string
+          live_count: number | null
+          live_median: number | null
+          make: string
+          model: string
+          sold_count: number | null
+          sold_median: number | null
+          trend_7d_vs_30d: number | null
+        }
+        Insert: {
+          avg_days_on_market?: number | null
+          calculated_at?: string | null
+          courantheid_score?: number | null
+          fuel_type?: string | null
+          id?: string
+          live_count?: number | null
+          live_median?: number | null
+          make: string
+          model: string
+          sold_count?: number | null
+          sold_median?: number | null
+          trend_7d_vs_30d?: number | null
+        }
+        Update: {
+          avg_days_on_market?: number | null
+          calculated_at?: string | null
+          courantheid_score?: number | null
+          fuel_type?: string | null
+          id?: string
+          live_count?: number | null
+          live_median?: number | null
+          make?: string
+          model?: string
+          sold_count?: number | null
+          sold_median?: number | null
+          trend_7d_vs_30d?: number | null
         }
         Relationships: []
       }

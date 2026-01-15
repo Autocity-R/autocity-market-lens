@@ -484,7 +484,7 @@ export default function Valuation() {
                       <Progress value={result.confidence} className="h-1.5 mt-2" />
                     </div>
                     <div className="text-center">
-                      <p className="text-3xl font-bold text-foreground">{result.windowSize}</p>
+                      <p className="text-3xl font-bold text-foreground">{result.cohortSize}</p>
                       <p className="text-sm text-muted-foreground mt-1">Vergelijkbare</p>
                       <div className="flex items-center justify-center gap-1 mt-1">
                         <Car className="h-3 w-3 text-muted-foreground" />
@@ -492,7 +492,7 @@ export default function Valuation() {
                       </div>
                     </div>
                     <div className="text-center">
-                      <p className="text-3xl font-bold text-foreground">{result.avgDaysOnMarket}d</p>
+                      <p className="text-3xl font-bold text-foreground">{result.courantheid.avgDaysToSell}d</p>
                       <p className="text-sm text-muted-foreground mt-1">Gem. doorlooptijd</p>
                       <div className="flex items-center justify-center gap-1 mt-1">
                         <Clock className="h-3 w-3 text-muted-foreground" />
@@ -502,12 +502,12 @@ export default function Valuation() {
                   </div>
 
                   {/* Options adjustment */}
-                  {result.optionsAdjustment !== 0 && (
+                  {result.optionsAnalysis.totalAdjustment !== 0 && (
                     <div className="mt-4 p-3 rounded-lg bg-muted/50">
                       <p className="text-sm">
                         <span className="font-medium">Opties correctie: </span>
-                        <span className={result.optionsAdjustment > 0 ? 'text-success' : 'text-destructive'}>
-                          {result.optionsAdjustment > 0 ? '+' : ''}€{result.optionsAdjustment.toLocaleString()}
+                        <span className={result.optionsAnalysis.totalAdjustment > 0 ? 'text-success' : 'text-destructive'}>
+                          {result.optionsAnalysis.totalAdjustment > 0 ? '+' : ''}€{result.optionsAnalysis.totalAdjustment.toLocaleString()}
                         </span>
                       </p>
                     </div>
