@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useRdwLookup, RdwVehicle } from '@/hooks/useRdwLookup';
-import { Search, Loader2, Car, CheckCircle, AlertCircle } from 'lucide-react';
+import { useRdwLookup, RdwVehicle, RdwVehicleExtended } from '@/hooks/useRdwLookup';
+import { RdwVehicleEditor } from './RdwVehicleEditor';
+import { Search, Loader2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface LicensePlateInputProps {
@@ -13,7 +12,7 @@ interface LicensePlateInputProps {
 
 export function LicensePlateInput({ onVehicleFound }: LicensePlateInputProps) {
   const [plate, setPlate] = useState('');
-  const [foundVehicle, setFoundVehicle] = useState<RdwVehicle | null>(null);
+  const [foundVehicle, setFoundVehicle] = useState<RdwVehicleExtended | null>(null);
   const rdwLookup = useRdwLookup();
 
   const formatPlate = (value: string): string => {
@@ -51,11 +50,15 @@ export function LicensePlateInput({ onVehicleFound }: LicensePlateInputProps) {
     }
   };
 
-  const handleUseVehicle = () => {
-    if (foundVehicle) {
-      onVehicleFound(foundVehicle);
-      toast.success('Voertuiggegevens overgenomen');
-    }
+  const handleConfirmVehicle = (vehicle: RdwVehicle) => {
+    onVehicleFound(vehicle);
+    setFoundVehicle(null);
+    setPlate('');
+    toast.success('Voertuiggegevens overgenomen');
+  };
+
+  const handleCancel = () => {
+    setFoundVehicle(null);
   };
 
   return (
@@ -69,11 +72,12 @@ export function LicensePlateInput({ onVehicleFound }: LicensePlateInputProps) {
             className="bg-muted border-border text-lg font-mono tracking-wider uppercase"
             maxLength={9}
             onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
+            disabled={!!foundVehicle}
           />
         </div>
         <Button 
           onClick={handleLookup}
-          disabled={rdwLookup.isPending || plate.replace(/-/g, '').length < 6}
+          disabled={rdwLookup.isPending || plate.replace(/-/g, '').length < 6 || !!foundVehicle}
         >
           {rdwLookup.isPending ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -91,53 +95,14 @@ export function LicensePlateInput({ onVehicleFound }: LicensePlateInputProps) {
       )}
 
       {foundVehicle && (
-        <Card className="bg-muted/50 border-success/30">
-          <CardContent className="p-4">
-            <div className="flex items-start justify-between">
-              <div className="flex items-start gap-3">
-                <div className="h-10 w-10 rounded-lg bg-success/10 flex items-center justify-center">
-                  <CheckCircle className="h-5 w-5 text-success" />
-                </div>
-                <div>
-                  <h4 className="font-semibold text-foreground">
-                    {foundVehicle.make} {foundVehicle.model}
-                  </h4>
-                  <p className="text-sm text-muted-foreground">
-                    {foundVehicle.year} • {foundVehicle.fuelType} • {foundVehicle.transmission}
-                  </p>
-                  {foundVehicle.power && (
-                    <p className="text-sm text-muted-foreground">
-                      {foundVehicle.power.hp} PK ({foundVehicle.power.kw} kW)
-                    </p>
-                  )}
-                  <div className="flex items-center gap-2 mt-2">
-                    <Badge variant="outline" className="text-xs">
-                      {foundVehicle.bodyType}
-                    </Badge>
-                    {foundVehicle.color && (
-                      <Badge variant="outline" className="text-xs">
-                        {foundVehicle.color}
-                      </Badge>
-                    )}
-                    <Badge variant="outline" className="text-xs">
-                      {foundVehicle.doors} deuren
-                    </Badge>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <Button 
-              className="w-full mt-4" 
-              onClick={handleUseVehicle}
-            >
-              <Car className="h-4 w-4 mr-2" />
-              Voertuig overnemen
-            </Button>
-          </CardContent>
-        </Card>
+        <RdwVehicleEditor
+          vehicle={foundVehicle}
+          onConfirm={handleConfirmVehicle}
+          onCancel={handleCancel}
+        />
       )}
 
-      {rdwLookup.isError && (
+      {rdwLookup.isError && !foundVehicle && (
         <div className="flex items-center gap-2 text-destructive text-sm">
           <AlertCircle className="h-4 w-4" />
           {rdwLookup.error instanceof Error ? rdwLookup.error.message : 'Kenteken niet gevonden'}
