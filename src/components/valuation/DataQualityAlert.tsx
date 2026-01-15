@@ -5,15 +5,15 @@ import { Shield, AlertTriangle, CheckCircle, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface Props {
-  quality: QualityAssessment;
-  risks: string[];
+  dataQuality: QualityAssessment;
+  risks?: string[];
 }
 
-export function DataQualityAlert({ quality, risks }: Props) {
-  const allWarnings = [...quality.warnings, ...risks];
+export function DataQualityAlert({ dataQuality, risks = [] }: Props) {
+  const allWarnings = [...dataQuality.warnings, ...risks];
 
   const getQualityIcon = () => {
-    switch (quality.quality) {
+    switch (dataQuality.quality) {
       case 'excellent':
         return <CheckCircle className="h-4 w-4 text-success" />;
       case 'good':
@@ -26,7 +26,7 @@ export function DataQualityAlert({ quality, risks }: Props) {
   };
 
   const getQualityLabel = () => {
-    switch (quality.quality) {
+    switch (dataQuality.quality) {
       case 'excellent':
         return 'Uitstekend';
       case 'good':
@@ -39,7 +39,7 @@ export function DataQualityAlert({ quality, risks }: Props) {
   };
 
   const getQualityVariant = (): 'default' | 'secondary' | 'destructive' | 'outline' => {
-    switch (quality.quality) {
+    switch (dataQuality.quality) {
       case 'excellent':
         return 'default';
       case 'good':
@@ -52,10 +52,10 @@ export function DataQualityAlert({ quality, risks }: Props) {
   };
 
   const getAlertVariant = (): 'default' | 'destructive' => {
-    return quality.quality === 'limited' ? 'destructive' : 'default';
+    return dataQuality.quality === 'limited' ? 'destructive' : 'default';
   };
 
-  if (allWarnings.length === 0 && quality.quality === 'excellent') {
+  if (allWarnings.length === 0 && dataQuality.quality === 'excellent') {
     return null;
   }
 

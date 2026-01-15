@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Toggle } from '@/components/ui/toggle';
@@ -13,6 +13,11 @@ import { useVehicleMakes, useVehicleModels, useVehicleFuels, useVehicleTransmiss
 import { RdwVehicle } from '@/hooks/useRdwLookup';
 import { LicensePlateInput } from '@/components/valuation/LicensePlateInput';
 import { OptionsSelector } from '@/components/valuation/OptionsSelector';
+import { PriceBreakdown } from '@/components/valuation/PriceBreakdown';
+import { CourantheidMeter } from '@/components/valuation/CourantheidMeter';
+import { MarketTrendBadge } from '@/components/valuation/MarketTrendBadge';
+import { OptionsAnalysisCard } from '@/components/valuation/OptionsAnalysisCard';
+import { DataQualityAlert } from '@/components/valuation/DataQualityAlert';
 import {
   Select,
   SelectContent,
@@ -20,6 +25,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import {
   Car,
   Clock,
@@ -32,6 +42,11 @@ import {
   Download,
   Layers,
   Zap,
+  ChevronDown,
+  TrendingUp,
+  Shield,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -432,155 +447,288 @@ export default function Valuation() {
 
           {/* Results */}
           {result && (
-            <>
-              {/* Main Valuation Card */}
-              <Card className="bg-card border-border overflow-hidden">
-                <div className="bg-gradient-to-r from-primary/10 to-primary/5 border-b border-border p-6">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <Layers className="h-5 w-5 text-primary" />
-                        <h3 className="text-lg font-medium text-foreground">
-                          {formData.make} {formData.model} {formData.year}
-                        </h3>
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        {formData.mileage?.toLocaleString()} km • {formData.fuelType} • {formData.transmission || 'Onbekend'}
-                        {formData.power?.hp && ` • ${formData.power.hp} PK`}
-                      </p>
-                      {formData.options && formData.options.length > 0 && (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {formData.options.length} opties geselecteerd
-                        </p>
-                      )}
-                    </div>
-                    <Button variant="outline" size="sm">
-                      <Download className="h-4 w-4 mr-1" />
-                      Rapport
-                    </Button>
-                  </div>
-                </div>
-                <CardContent className="p-6">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                    <div className="text-center">
-                      <p className="text-3xl font-bold text-primary">
-                        €{result.estimatedValue.toLocaleString()}
-                      </p>
-                      <p className="text-sm text-muted-foreground mt-1">Geschatte waarde</p>
-                      <p className="text-xs text-muted-foreground">
-                        €{result.priceRange.low.toLocaleString()} - €{result.priceRange.high.toLocaleString()}
-                      </p>
-                    </div>
-                    <div className="text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        <span className="text-3xl font-bold text-success">{result.confidence}%</span>
-                        {result.confidence >= 70 ? (
-                          <CheckCircle className="h-5 w-5 text-success" />
-                        ) : (
-                          <AlertCircle className="h-5 w-5 text-warning" />
-                        )}
-                      </div>
-                      <p className="text-sm text-muted-foreground mt-1">Betrouwbaarheid</p>
-                      <Progress value={result.confidence} className="h-1.5 mt-2" />
-                    </div>
-                    <div className="text-center">
-                      <p className="text-3xl font-bold text-foreground">{result.cohortSize}</p>
-                      <p className="text-sm text-muted-foreground mt-1">Vergelijkbare</p>
-                      <div className="flex items-center justify-center gap-1 mt-1">
-                        <Car className="h-3 w-3 text-muted-foreground" />
-                        <span className="text-xs text-muted-foreground">voertuigen</span>
-                      </div>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-3xl font-bold text-foreground">{result.courantheid.avgDaysToSell}d</p>
-                      <p className="text-sm text-muted-foreground mt-1">Gem. doorlooptijd</p>
-                      <div className="flex items-center justify-center gap-1 mt-1">
-                        <Clock className="h-3 w-3 text-muted-foreground" />
-                        <span className="text-xs text-muted-foreground">in dit segment</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Options adjustment */}
-                  {result.optionsAnalysis.totalAdjustment !== 0 && (
-                    <div className="mt-4 p-3 rounded-lg bg-muted/50">
-                      <p className="text-sm">
-                        <span className="font-medium">Opties correctie: </span>
-                        <span className={result.optionsAnalysis.totalAdjustment > 0 ? 'text-success' : 'text-destructive'}>
-                          {result.optionsAnalysis.totalAdjustment > 0 ? '+' : ''}€{result.optionsAnalysis.totalAdjustment.toLocaleString()}
-                        </span>
-                      </p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* AI Market Insight */}
-              {result.marketInsight && (
-                <Card className="bg-card border-border">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="flex items-center gap-2 text-base">
-                      <Sparkles className="h-4 w-4 text-primary" />
-                      AI Marktinzicht
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground">{result.marketInsight}</p>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Comparables */}
-              <Card className="bg-card border-border">
-                <CardHeader>
-                  <CardTitle className="text-lg">Vergelijkbare Voertuigen</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {result.comparables.length === 0 ? (
-                    <p className="text-muted-foreground text-center py-4">
-                      Geen vergelijkbare voertuigen gevonden
-                    </p>
-                  ) : (
-                    <div className="space-y-3">
-                      {result.comparables.map((comp, index) => (
-                        <div
-                          key={index}
-                          className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
-                        >
-                          <div className="flex items-center gap-3">
-                            {comp.isSold ? (
-                              <Badge variant="default" className="bg-success">Verkocht</Badge>
-                            ) : (
-                              <Badge variant="outline">Actief</Badge>
-                            )}
-                            <div>
-                              <p className="text-sm font-medium text-foreground">{comp.title}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {comp.mileage.toLocaleString()} km
-                              </p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-sm font-semibold text-foreground">
-                              €{comp.price.toLocaleString()}
-                            </p>
-                            <p className={cn(
-                              'text-xs',
-                              comp.isSold ? 'text-success' : 'text-muted-foreground'
-                            )}>
-                              {comp.isSold ? `Verkocht na ${comp.daysOnMarket}d` : `${comp.daysOnMarket}d actief`}
-                            </p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </>
+            <ResultsSection result={result} formData={formData} />
           )}
         </div>
       </div>
     </MainLayout>
+  );
+}
+
+// Separate results component for cleaner code
+function ResultsSection({ result, formData }: { result: ValuationResult; formData: ValuationRequest }) {
+  const [showOutliers, setShowOutliers] = useState(false);
+
+  const getQualityColor = (quality: string) => {
+    switch (quality) {
+      case 'excellent': return 'text-success';
+      case 'good': return 'text-primary';
+      case 'fair': return 'text-warning';
+      case 'limited': return 'text-destructive';
+      default: return 'text-muted-foreground';
+    }
+  };
+
+  const getQualityLabel = (quality: string) => {
+    switch (quality) {
+      case 'excellent': return 'Uitstekend';
+      case 'good': return 'Goed';
+      case 'fair': return 'Redelijk';
+      case 'limited': return 'Beperkt';
+      default: return quality;
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Data Quality Warnings */}
+      {result.dataQuality.warnings.length > 0 && (
+        <DataQualityAlert dataQuality={result.dataQuality} />
+      )}
+
+      {/* Main Valuation Card */}
+      <Card className="bg-card border-border overflow-hidden">
+        <div className="bg-gradient-to-r from-primary/10 to-primary/5 border-b border-border p-6">
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <Layers className="h-5 w-5 text-primary" />
+                <h3 className="text-lg font-medium text-foreground">
+                  {formData.make} {formData.model} {formData.year}
+                </h3>
+                <MarketTrendBadge trend={result.marketTrend} />
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {formData.mileage?.toLocaleString()} km • {formData.fuelType} • {formData.transmission || 'Onbekend'}
+                {formData.power?.hp && ` • ${formData.power.hp} PK`}
+              </p>
+              {formData.options && formData.options.length > 0 && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {formData.options.length} opties geselecteerd
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className={getQualityColor(result.dataQuality.quality)}>
+                <Shield className="h-3 w-3 mr-1" />
+                {getQualityLabel(result.dataQuality.quality)}
+              </Badge>
+              <Button variant="outline" size="sm">
+                <Download className="h-4 w-4 mr-1" />
+                Rapport
+              </Button>
+            </div>
+          </div>
+        </div>
+        <CardContent className="p-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+            <div className="text-center">
+              <p className="text-3xl font-bold text-primary">
+                €{result.estimatedValue.toLocaleString()}
+              </p>
+              <p className="text-sm text-muted-foreground mt-1">Geschatte waarde</p>
+              <p className="text-xs text-muted-foreground">
+                €{result.priceRange.low.toLocaleString()} - €{result.priceRange.high.toLocaleString()}
+              </p>
+            </div>
+            <div className="text-center">
+              <div className="flex items-center justify-center gap-2">
+                <span className="text-3xl font-bold text-success">{result.confidence}%</span>
+                {result.confidence >= 70 ? (
+                  <CheckCircle className="h-5 w-5 text-success" />
+                ) : (
+                  <AlertCircle className="h-5 w-5 text-warning" />
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground mt-1">Betrouwbaarheid</p>
+              <Progress value={result.confidence} className="h-1.5 mt-2" />
+            </div>
+            <div className="text-center">
+              <p className="text-3xl font-bold text-foreground">{result.cohortSize}</p>
+              <p className="text-sm text-muted-foreground mt-1">Vergelijkbare</p>
+              <div className="flex items-center justify-center gap-1 mt-1">
+                <Car className="h-3 w-3 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">voertuigen</span>
+              </div>
+            </div>
+            <div className="text-center">
+              <p className="text-3xl font-bold text-foreground">{result.salesCount}</p>
+              <p className="text-sm text-muted-foreground mt-1">Recente verkopen</p>
+              <div className="flex items-center justify-center gap-1 mt-1">
+                <TrendingUp className="h-3 w-3 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">laatste 50 dagen</span>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Price Breakdown */}
+      <Card className="bg-card border-border">
+        <CardContent className="p-4">
+          <PriceBreakdown breakdown={result.priceBreakdown} />
+        </CardContent>
+      </Card>
+
+      {/* Grid for Courantheid and Options */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Courantheid Meter */}
+        <CourantheidMeter courantheid={result.courantheid} />
+
+        {/* Options Analysis */}
+        <OptionsAnalysisCard analysis={result.optionsAnalysis} />
+      </div>
+
+      {/* AI Market Insight */}
+      {result.marketInsight && (
+        <Card className="bg-card border-border">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Sparkles className="h-4 w-4 text-primary" />
+              AI Marktinzicht
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">{result.marketInsight}</p>
+            
+            {/* Risks */}
+            {result.risks.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Aandachtspunten:</p>
+                {result.risks.map((risk, index) => (
+                  <div key={index} className="flex items-start gap-2 p-2 rounded bg-warning/10 border border-warning/20">
+                    <AlertCircle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
+                    <span className="text-sm">{risk}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Comparables */}
+      <Card className="bg-card border-border">
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">Vergelijkbare Voertuigen</CardTitle>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline">
+                {result.comparables.length} stuks
+              </Badge>
+              {result.outliers.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowOutliers(!showOutliers)}
+                  className="text-xs"
+                >
+                  {showOutliers ? (
+                    <>
+                      <EyeOff className="h-3 w-3 mr-1" />
+                      Verberg uitschieters
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="h-3 w-3 mr-1" />
+                      Toon {result.outliers.length} uitschieters
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
+          </div>
+          <CardDescription>
+            Cohort criteria: ±{result.dataQuality.cohortCriteria.yearRange} jaar, 
+            ±{Math.round(result.dataQuality.cohortCriteria.mileageRange * 100)}% km
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {result.comparables.length === 0 ? (
+            <p className="text-muted-foreground text-center py-4">
+              Geen vergelijkbare voertuigen gevonden
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {result.comparables.slice(0, 10).map((comp, index) => (
+                <ComparableRow key={comp.id || index} comp={comp} />
+              ))}
+              
+              {result.comparables.length > 10 && (
+                <Collapsible>
+                  <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground w-full justify-center py-2">
+                    <ChevronDown className="h-4 w-4" />
+                    Toon alle {result.comparables.length} voertuigen
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-2">
+                    {result.comparables.slice(10).map((comp, index) => (
+                      <ComparableRow key={comp.id || index + 10} comp={comp} />
+                    ))}
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
+
+              {/* Outliers */}
+              {showOutliers && result.outliers.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-border">
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Uitschieters (niet meegenomen in berekening):
+                  </p>
+                  {result.outliers.map((comp, index) => (
+                    <ComparableRow key={comp.id || `outlier-${index}`} comp={comp} isOutlier />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// Comparable row component
+function ComparableRow({ comp, isOutlier = false }: { comp: ValuationResult['comparables'][0]; isOutlier?: boolean }) {
+  return (
+    <div
+      className={cn(
+        'flex items-center justify-between p-3 rounded-lg transition-colors',
+        isOutlier ? 'bg-muted/30 opacity-60' : 'bg-muted/50 hover:bg-muted'
+      )}
+    >
+      <div className="flex items-center gap-3">
+        {comp.isSold ? (
+          <Badge variant="default" className="bg-success text-success-foreground">Verkocht</Badge>
+        ) : (
+          <Badge variant="outline">Actief</Badge>
+        )}
+        <div>
+          <p className="text-sm font-medium text-foreground">{comp.title}</p>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>{comp.mileage.toLocaleString()} km</span>
+            {comp.optionsMatchScore !== undefined && (
+              <>
+                <span>•</span>
+                <span>{comp.optionsMatchScore}% opties match</span>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="text-right">
+        <p className={cn(
+          'text-sm font-semibold',
+          isOutlier ? 'text-muted-foreground line-through' : 'text-foreground'
+        )}>
+          €{comp.price.toLocaleString()}
+        </p>
+        <p className={cn(
+          'text-xs',
+          comp.isSold ? 'text-success' : 'text-muted-foreground'
+        )}>
+          {comp.isSold ? `Verkocht na ${comp.daysOnMarket}d` : `${comp.daysOnMarket}d actief`}
+        </p>
+      </div>
+    </div>
   );
 }
