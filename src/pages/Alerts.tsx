@@ -291,7 +291,7 @@ export default function Alerts() {
                           <SelectItem value="">Geen dealer</SelectItem>
                           {dealers?.slice(0, 20).map((dealer) => (
                             <SelectItem key={dealer.id} value={dealer.id}>
-                              {dealer.name_raw || dealer.name_normalized}
+                              {dealer.name}
                             </SelectItem>
                           ))}
                         </SelectContent>
