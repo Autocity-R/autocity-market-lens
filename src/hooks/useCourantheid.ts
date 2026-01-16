@@ -1,6 +1,17 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 
+export interface BestsellersFilters {
+  make?: string;
+  model?: string;
+  fuelType?: string;
+  transmission?: string;
+  yearFrom?: number;
+  yearTo?: number;
+  mileageMin?: number;
+  mileageMax?: number;
+}
+
 export interface SegmentCourantheid {
   id: string;
   name: string;
@@ -11,18 +22,32 @@ export interface SegmentCourantheid {
   windowSize: number;
   avgPrice: number;
   medianPrice: number;
+  filters?: {
+    make?: string;
+    model?: string;
+    yearFrom?: number;
+    yearTo?: number;
+    fuelTypes?: string[];
+    mileageMin?: number;
+    mileageMax?: number;
+    transmission?: string;
+  };
 }
 
 interface CourantheidResponse {
   segments: SegmentCourantheid[];
 }
 
-export function useCourantheid(segmentId?: string) {
+export function useCourantheid(filters?: BestsellersFilters, segmentId?: string) {
   return useQuery({
-    queryKey: ['courantheid', segmentId],
+    queryKey: ['courantheid', filters, segmentId],
     queryFn: async (): Promise<CourantheidResponse> => {
       const { data, error } = await supabase.functions.invoke('calculate-courantheid', {
-        body: { segmentId, forceRecalculate: false },
+        body: { 
+          segmentId, 
+          forceRecalculate: false,
+          filters,
+        },
       });
 
       if (error) throw error;
@@ -36,9 +61,13 @@ export function useRecalculateCourantheid() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (segmentId?: string) => {
+    mutationFn: async (params?: { segmentId?: string; filters?: BestsellersFilters }) => {
       const { data, error } = await supabase.functions.invoke('calculate-courantheid', {
-        body: { segmentId, forceRecalculate: true },
+        body: { 
+          segmentId: params?.segmentId, 
+          forceRecalculate: true,
+          filters: params?.filters,
+        },
       });
 
       if (error) throw error;
