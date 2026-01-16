@@ -4,6 +4,13 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import type { ScraperStatusResponse, ScraperJob, ScraperConfig } from '@/types/scraper';
 
+// ===== TYPES FOR TEST MODES =====
+export interface DiscoveryParams {
+  maxPages?: number;
+  dryRun?: boolean;
+  indexOnly?: boolean;
+}
+
 // ===== MOCK DATA =====
 const mockGaspedaalJobs: ScraperJob[] = [
   {
@@ -302,12 +309,17 @@ export function useScraperActions(source: string) {
   const queryClient = useQueryClient();
   const { dataSource } = useDataSource();
   
+  // Regular discovery (index + detail for new listings)
   const runDiscovery = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (params?: DiscoveryParams) => {
+      const maxPages = params?.maxPages ?? 5;
+      const dryRun = params?.dryRun ?? false;
+      const indexOnly = params?.indexOnly ?? false;
+      
       if (dataSource !== 'db') {
-        console.log('Mock: Triggering discovery for', source);
+        console.log('Mock: Triggering discovery for', source, { maxPages, dryRun, indexOnly });
         await new Promise(r => setTimeout(r, 500));
-        return { jobId: `mock-job-${Date.now()}` };
+        return { jobId: `mock-job-${Date.now()}`, dryRun, indexOnly };
       }
       
       const { data: job, error: jobError } = await supabase
@@ -327,10 +339,15 @@ export function useScraperActions(source: string) {
         throw new Error('Failed to create job record');
       }
       
-      console.log('Created job:', job.id);
+      console.log('Created job:', job.id, { maxPages, dryRun, indexOnly });
       
       const { data, error } = await supabase.functions.invoke('gaspedaal-discovery', {
-        body: { jobId: job.id, maxPages: 3 },
+        body: { 
+          jobId: job.id, 
+          maxPages,
+          dryRun,
+          indexOnly,
+        },
       });
       
       if (error) {
@@ -352,7 +369,12 @@ export function useScraperActions(source: string) {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['scraper-status', source] });
       queryClient.invalidateQueries({ queryKey: ['listings'] });
-      toast.success(`Discovery job gestart (${data.jobId})`);
+      
+      let message = `Discovery job gestart (${data.jobId})`;
+      if (data.dryRun) message = `Dry run voltooid (${data.jobId})`;
+      else if (data.indexOnly) message = `Index-only job voltooid (${data.jobId})`;
+      
+      toast.success(message);
     },
     onError: (error) => {
       console.error('Discovery failed:', error);
