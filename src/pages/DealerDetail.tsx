@@ -3,6 +3,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { useDealerAnalysis, useDealersList } from '@/hooks/useDealerIntelligence';
 import { 
   Building2, 
@@ -11,10 +19,13 @@ import {
   TrendingUp, 
   Clock, 
   DollarSign,
-  BarChart3,
   Loader2,
   ArrowLeft,
   CheckCircle,
+  ExternalLink,
+  Calendar,
+  Gauge,
+  Fuel,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Link, useParams, useNavigate } from 'react-router-dom';
@@ -26,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 export default function DealerDetail() {
   const { id } = useParams<{ id: string }>();
@@ -81,7 +93,7 @@ export default function DealerDetail() {
               )}
               {dealers?.map((dealer) => (
                 <SelectItem key={dealer.id} value={dealer.id}>
-                  {dealer.name_raw || dealer.name_normalized || 'Unknown'} 
+                  {dealer.name} 
                   {dealer.city && ` - ${dealer.city}`}
                 </SelectItem>
               ))}
@@ -206,191 +218,326 @@ export default function DealerDetail() {
               </Card>
             </div>
 
-            {/* Price comparison */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Prijsvergelijking met Markt</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-8">
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-2">Dealer gemiddelde</p>
-                    <p className="text-3xl font-bold">€{analysis.performance.avgPrice.toLocaleString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-2">Markt gemiddelde</p>
-                    <p className="text-3xl font-bold text-muted-foreground">
-                      €{analysis.performance.marketAvgPrice.toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-4">
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>Prijspositie</span>
-                    <span className={cn(
-                      analysis.performance.avgPrice < analysis.performance.marketAvgPrice * 0.95
-                        ? "text-success"
-                        : analysis.performance.avgPrice > analysis.performance.marketAvgPrice * 1.05
-                          ? "text-warning"
-                          : "text-primary"
-                    )}>
-                      {Math.round((analysis.performance.avgPrice / analysis.performance.marketAvgPrice - 1) * 100)}% vs markt
-                    </span>
-                  </div>
-                  <Progress 
-                    value={Math.min(100, (analysis.performance.avgPrice / analysis.performance.marketAvgPrice) * 50)} 
-                    className="h-2" 
-                  />
-                </div>
-              </CardContent>
-            </Card>
+            {/* Tabs for different views */}
+            <Tabs defaultValue="sales" className="space-y-4">
+              <TabsList>
+                <TabsTrigger value="sales">Verkopen</TabsTrigger>
+                <TabsTrigger value="inventory">Voorraad</TabsTrigger>
+                <TabsTrigger value="performance">Performance</TabsTrigger>
+              </TabsList>
 
-            {/* Top makes & models */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Top Merken</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {analysis.topMakes.length === 0 ? (
-                    <p className="text-muted-foreground">Geen data beschikbaar</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {analysis.topMakes.map((make, index) => (
-                        <div key={make.name} className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg font-bold text-muted-foreground">#{index + 1}</span>
-                            <span className="font-medium">{make.name}</span>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-medium">{make.count} stuks</p>
-                            <p className="text-xs text-muted-foreground">
-                              Gem. €{make.avgPrice.toLocaleString()}
-                            </p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Top Modellen</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {analysis.topModels.length === 0 ? (
-                    <p className="text-muted-foreground">Geen data beschikbaar</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {analysis.topModels.map((model, index) => (
-                        <div key={model.name} className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg font-bold text-muted-foreground">#{index + 1}</span>
-                            <span className="font-medium">{model.name}</span>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-medium">{model.count} stuks</p>
-                            <p className="text-xs text-muted-foreground">
-                              Gem. €{model.avgPrice.toLocaleString()}
-                            </p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Recent sales */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Recente Verkopen</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {analysis.recentSales.length === 0 ? (
-                  <p className="text-muted-foreground">Geen recente verkopen gevonden</p>
-                ) : (
-                  <div className="space-y-3">
-                    {analysis.recentSales.map((sale, index) => (
-                      <div 
-                        key={index} 
-                        className="flex items-center justify-between p-3 rounded-lg bg-muted/50"
-                      >
-                        <div>
-                          <p className="font-medium">{sale.title}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {new Date(sale.soldAt).toLocaleDateString('nl-NL')} • {sale.daysOnMarket} dagen online
-                          </p>
-                        </div>
-                        <p className="font-semibold">€{sale.price.toLocaleString()}</p>
+              {/* Sales Tab */}
+              <TabsContent value="sales" className="space-y-6">
+                {/* Recent sales table */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <CheckCircle className="h-5 w-5 text-success" />
+                      Verkochte voertuigen (90 dagen)
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {analysis.recentSales.length === 0 ? (
+                      <p className="text-muted-foreground py-8 text-center">
+                        Geen recente verkopen gevonden voor deze dealer.
+                      </p>
+                    ) : (
+                      <div className="border rounded-lg overflow-hidden">
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-muted/50">
+                              <TableHead>Voertuig</TableHead>
+                              <TableHead className="text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                  <Calendar className="h-3.5 w-3.5" />
+                                  Verkocht op
+                                </div>
+                              </TableHead>
+                              <TableHead className="text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                  <Clock className="h-3.5 w-3.5" />
+                                  Dagen online
+                                </div>
+                              </TableHead>
+                              <TableHead className="text-right">
+                                <div className="flex items-center justify-end gap-1">
+                                  <DollarSign className="h-3.5 w-3.5" />
+                                  Prijs
+                                </div>
+                              </TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {analysis.recentSales.map((sale, index) => (
+                              <TableRow key={index}>
+                                <TableCell>
+                                  <div>
+                                    <p className="font-medium">{sale.title}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      {sale.make && sale.model ? `${sale.make} ${sale.model}` : ''}
+                                      {sale.year ? ` • ${sale.year}` : ''}
+                                      {sale.fuelType ? ` • ${sale.fuelType}` : ''}
+                                    </p>
+                                  </div>
+                                </TableCell>
+                                <TableCell className="text-center text-sm">
+                                  {new Date(sale.soldAt).toLocaleDateString('nl-NL')}
+                                </TableCell>
+                                <TableCell className="text-center">
+                                  <span className={cn(
+                                    "font-medium",
+                                    sale.daysOnMarket <= 20 ? "text-success" :
+                                    sale.daysOnMarket <= 40 ? "text-warning" : "text-destructive"
+                                  )}>
+                                    {sale.daysOnMarket}d
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-right font-semibold">
+                                  €{sale.price.toLocaleString('nl-NL')}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
                       </div>
-                    ))}
-                  </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Top makes & models from sales */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Top Verkochte Merken</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {analysis.topMakes.length === 0 ? (
+                        <p className="text-muted-foreground">Geen data beschikbaar</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {analysis.topMakes.map((make, index) => (
+                            <div key={make.name} className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className="text-lg font-bold text-muted-foreground">#{index + 1}</span>
+                                <span className="font-medium">{make.name}</span>
+                              </div>
+                              <div className="text-right">
+                                <p className="font-medium">{make.count} stuks</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Gem. €{make.avgPrice.toLocaleString()}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Top Verkochte Modellen</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {analysis.topModels.length === 0 ? (
+                        <p className="text-muted-foreground">Geen data beschikbaar</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {analysis.topModels.map((model, index) => (
+                            <div key={model.name} className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className="text-lg font-bold text-muted-foreground">#{index + 1}</span>
+                                <span className="font-medium">{model.name}</span>
+                              </div>
+                              <div className="text-right">
+                                <p className="font-medium">{model.count} stuks</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Gem. €{model.avgPrice.toLocaleString()}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              </TabsContent>
+
+              {/* Inventory Tab */}
+              <TabsContent value="inventory" className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Voorraad per Prijsklasse</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {Object.keys(analysis.inventory.byPriceBucket).length === 0 ? (
+                        <p className="text-muted-foreground">Geen data beschikbaar</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {Object.entries(analysis.inventory.byPriceBucket)
+                            .sort((a, b) => b[1] - a[1])
+                            .map(([bucket, count]) => (
+                              <div key={bucket} className="flex items-center justify-between">
+                                <span>{bucket}</span>
+                                <div className="flex items-center gap-2">
+                                  <Progress 
+                                    value={(count / analysis.inventory.total) * 100} 
+                                    className="w-20 h-2" 
+                                  />
+                                  <span className="text-sm font-medium w-8">{count}</span>
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Voorraad per Brandstof</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {Object.keys(analysis.inventory.byFuelType).length === 0 ? (
+                        <p className="text-muted-foreground">Geen data beschikbaar</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {Object.entries(analysis.inventory.byFuelType)
+                            .sort((a, b) => b[1] - a[1])
+                            .map(([fuel, count]) => (
+                              <div key={fuel} className="flex items-center justify-between">
+                                <span className="capitalize">{fuel}</span>
+                                <div className="flex items-center gap-2">
+                                  <Progress 
+                                    value={(count / analysis.inventory.total) * 100} 
+                                    className="w-20 h-2" 
+                                  />
+                                  <span className="text-sm font-medium w-8">{count}</span>
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Year distribution if available */}
+                {analysis.inventory.byYear && Object.keys(analysis.inventory.byYear).length > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Voorraad per Bouwjaar</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        {Object.entries(analysis.inventory.byYear)
+                          .sort((a, b) => parseInt(b[0]) - parseInt(a[0]))
+                          .slice(0, 10)
+                          .map(([year, count]) => (
+                            <div key={year} className="flex items-center justify-between">
+                              <span>{year}</span>
+                              <div className="flex items-center gap-2">
+                                <Progress 
+                                  value={(count / analysis.inventory.total) * 100} 
+                                  className="w-20 h-2" 
+                                />
+                                <span className="text-sm font-medium w-8">{count}</span>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </CardContent>
+                  </Card>
                 )}
-              </CardContent>
-            </Card>
+              </TabsContent>
 
-            {/* Inventory breakdown */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Voorraad per Prijsklasse</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {Object.keys(analysis.inventory.byPriceBucket).length === 0 ? (
-                    <p className="text-muted-foreground">Geen data beschikbaar</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {Object.entries(analysis.inventory.byPriceBucket)
-                        .sort((a, b) => b[1] - a[1])
-                        .map(([bucket, count]) => (
-                          <div key={bucket} className="flex items-center justify-between">
-                            <span>{bucket}</span>
-                            <div className="flex items-center gap-2">
-                              <Progress 
-                                value={(count / analysis.inventory.total) * 100} 
-                                className="w-20 h-2" 
-                              />
-                              <span className="text-sm font-medium w-8">{count}</span>
-                            </div>
-                          </div>
-                        ))}
+              {/* Performance Tab */}
+              <TabsContent value="performance" className="space-y-6">
+                {/* Price comparison */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Prijsvergelijking met Markt</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-8">
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-2">Dealer gemiddelde</p>
+                        <p className="text-3xl font-bold">€{analysis.performance.avgPrice.toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-2">Markt gemiddelde</p>
+                        <p className="text-3xl font-bold text-muted-foreground">
+                          €{analysis.performance.marketAvgPrice.toLocaleString()}
+                        </p>
+                      </div>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
+                    <div className="mt-4">
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>Prijspositie</span>
+                        <span className={cn(
+                          analysis.performance.avgPrice < analysis.performance.marketAvgPrice * 0.95
+                            ? "text-success"
+                            : analysis.performance.avgPrice > analysis.performance.marketAvgPrice * 1.05
+                              ? "text-warning"
+                              : "text-primary"
+                        )}>
+                          {analysis.performance.marketAvgPrice > 0 
+                            ? `${Math.round((analysis.performance.avgPrice / analysis.performance.marketAvgPrice - 1) * 100)}% vs markt`
+                            : '-'}
+                        </span>
+                      </div>
+                      <Progress 
+                        value={analysis.performance.marketAvgPrice > 0 
+                          ? Math.min(100, (analysis.performance.avgPrice / analysis.performance.marketAvgPrice) * 50) 
+                          : 50} 
+                        className="h-2" 
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Voorraad per Brandstof</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {Object.keys(analysis.inventory.byFuelType).length === 0 ? (
-                    <p className="text-muted-foreground">Geen data beschikbaar</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {Object.entries(analysis.inventory.byFuelType)
-                        .sort((a, b) => b[1] - a[1])
-                        .map(([fuel, count]) => (
-                          <div key={fuel} className="flex items-center justify-between">
-                            <span className="capitalize">{fuel}</span>
-                            <div className="flex items-center gap-2">
-                              <Progress 
-                                value={(count / analysis.inventory.total) * 100} 
-                                className="w-20 h-2" 
-                              />
-                              <span className="text-sm font-medium w-8">{count}</span>
-                            </div>
-                          </div>
-                        ))}
+                {/* Days on market comparison */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Doorlooptijd vs Markt</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-8">
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-2">Dealer gemiddelde</p>
+                        <p className={cn(
+                          "text-3xl font-bold",
+                          analysis.performance.avgDaysOnMarket < analysis.performance.marketAvgDaysOnMarket
+                            ? "text-success"
+                            : "text-destructive"
+                        )}>
+                          {analysis.performance.avgDaysOnMarket} dagen
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-2">Markt gemiddelde</p>
+                        <p className="text-3xl font-bold text-muted-foreground">
+                          {analysis.performance.marketAvgDaysOnMarket} dagen
+                        </p>
+                      </div>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
+                    <div className="mt-4 text-sm">
+                      {analysis.performance.avgDaysOnMarket < analysis.performance.marketAvgDaysOnMarket ? (
+                        <p className="text-success">
+                          ✓ Deze dealer verkoopt {analysis.performance.marketAvgDaysOnMarket - analysis.performance.avgDaysOnMarket} dagen sneller dan gemiddeld
+                        </p>
+                      ) : (
+                        <p className="text-destructive">
+                          ✗ Deze dealer verkoopt {analysis.performance.avgDaysOnMarket - analysis.performance.marketAvgDaysOnMarket} dagen langzamer dan gemiddeld
+                        </p>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
           </>
         )}
       </div>
