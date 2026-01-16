@@ -46,6 +46,10 @@ interface IndexPageListing {
   dealerCity: string | null;
   outboundSources: string[];
   powerPk: number | null;
+  // Raw values for backup
+  rawPrice?: string | null;
+  rawYear?: string | null;
+  rawMileage?: string | null;
 }
 
 interface SafetyConfig {
@@ -66,6 +70,7 @@ interface SafetyState {
   unknownYearPriceCount: number;
   errors: number;
   stopReason: string | null;
+  rawListingsSaved: number;
 }
 
 interface JobStats {
@@ -77,6 +82,7 @@ interface JobStats {
   listingsSoldConfirmed: number;
   listingsReturned: number;
   errorsCount: number;
+  rawListingsSaved: number;
 }
 
 // ===== HELPER: SHA-256 Hash =====
@@ -302,13 +308,110 @@ async function getTodayCreditUsage(supabase: any, source: string): Promise<numbe
   }
 }
 
+// ===== RAW LISTING: Save raw data before parsing =====
+async function saveRawListing(
+  supabase: any,
+  listing: IndexPageListing,
+  html: string | null,
+  contentHash: string,
+  stats: JobStats
+): Promise<string | null> {
+  try {
+    const now = new Date().toISOString();
+    
+    // Check if raw listing already exists by URL
+    const { data: existing } = await supabase
+      .from('raw_listings')
+      .select('id, content_hash, consecutive_misses')
+      .eq('url', listing.url)
+      .maybeSingle();
+
+    if (existing) {
+      // Update existing raw listing
+      await supabase
+        .from('raw_listings')
+        .update({
+          content_hash: contentHash,
+          last_seen_at: now,
+          scraped_at: now,
+          raw_title: listing.title,
+          raw_price: listing.rawPrice || String(listing.price || ''),
+          raw_year: listing.rawYear || String(listing.year || ''),
+          raw_mileage: listing.rawMileage || String(listing.mileage || ''),
+          raw_specs: {
+            fuel_type: listing.fuelType,
+            transmission: listing.transmission,
+            body_type: listing.bodyType,
+            color: listing.color,
+            doors: listing.doors,
+            power_pk: listing.powerPk,
+            outbound_sources: listing.outboundSources,
+          },
+          dealer_name_raw: listing.dealerName,
+          dealer_city_raw: listing.dealerCity,
+          consecutive_misses: 0,
+        })
+        .eq('id', existing.id);
+      
+      return existing.id;
+    } else {
+      // Insert new raw listing
+      const { data: newRaw, error } = await supabase
+        .from('raw_listings')
+        .insert({
+          url: listing.url,
+          source: 'gaspedaal',
+          content_hash: contentHash,
+          raw_title: listing.title,
+          raw_price: listing.rawPrice || String(listing.price || ''),
+          raw_year: listing.rawYear || String(listing.year || ''),
+          raw_mileage: listing.rawMileage || String(listing.mileage || ''),
+          raw_specs: {
+            fuel_type: listing.fuelType,
+            transmission: listing.transmission,
+            body_type: listing.bodyType,
+            color: listing.color,
+            doors: listing.doors,
+            power_pk: listing.powerPk,
+            outbound_sources: listing.outboundSources,
+          },
+          dealer_name_raw: listing.dealerName,
+          dealer_city_raw: listing.dealerCity,
+          first_seen_at: now,
+          last_seen_at: now,
+          scraped_at: now,
+        })
+        .select('id')
+        .single();
+
+      if (error) {
+        console.error('Error saving raw listing:', error);
+        return null;
+      }
+      
+      stats.rawListingsSaved++;
+      return newRaw.id;
+    }
+  } catch (error) {
+    console.error('Error in saveRawListing:', error);
+    return null;
+  }
+}
+
 // ===== FIRECRAWL: Scrape URL =====
 async function scrapeWithFirecrawl(
   url: string, 
   apiKey: string,
   safety: SafetyState,
-  isIndexPage: boolean = false
+  isIndexPage: boolean = false,
+  dryRun: boolean = false
 ): Promise<string | null> {
+  // DRY RUN: Simulate without using credits
+  if (dryRun) {
+    console.log(`[DRY RUN] Would scrape: ${url}`);
+    return `<!-- DRY RUN: Simulated HTML for ${url} -->`;
+  }
+
   try {
     safety.creditsUsedToday++;
     safety.creditsUsedThisRun++;
@@ -361,7 +464,8 @@ function buildIndexPageUrl(page: number, make?: string): string {
     params.set('merk', make.toLowerCase());
   }
   
-  return `https://www.gaspedaal.nl/occasionzoeker?${params.toString()}`;
+  // Use /zoeken instead of /occasionzoeker - verified correct URL
+  return `https://www.gaspedaal.nl/zoeken?${params.toString()}`;
 }
 
 // ===== INDEX PAGE: Parse listing cards =====
@@ -438,7 +542,7 @@ function extractListingFromHtml(html: string, url: string): IndexPageListing | n
     
     if (!title) return null;
 
-    // Extract price
+    // Extract price (keep raw value for backup)
     let rawPrice: string | null = null;
     const pricePatterns = [
       /€\s*([\d.,]+)/,
@@ -453,7 +557,7 @@ function extractListingFromHtml(html: string, url: string): IndexPageListing | n
       }
     }
 
-    // Extract year
+    // Extract year (keep raw value for backup)
     let rawYear: string | null = null;
     const yearPatterns = [
       /(\d{2}[-\/])?(\d{4})/,
@@ -467,7 +571,7 @@ function extractListingFromHtml(html: string, url: string): IndexPageListing | n
       }
     }
 
-    // Extract mileage
+    // Extract mileage (keep raw value for backup)
     let rawMileage: string | null = null;
     const mileagePatterns = [
       /(\d{1,3}(?:[.,]\d{3})*)\s*km/i,
@@ -608,6 +712,10 @@ function extractListingFromHtml(html: string, url: string): IndexPageListing | n
       dealerCity,
       outboundSources,
       powerPk: safeParsePower(rawPower),
+      // Keep raw values for backup
+      rawPrice,
+      rawYear,
+      rawMileage,
     };
   } catch (error) {
     console.error(`Error extracting listing from HTML:`, error);
@@ -788,9 +896,10 @@ async function runDiscoveryMode(
   safetyConfig: SafetyConfig,
   stats: JobStats,
   errorLog: any[],
-  maxPages: number
+  maxPages: number,
+  dryRun: boolean = false
 ): Promise<void> {
-  console.log(`Starting discovery mode (max ${maxPages} pages)`);
+  console.log(`Starting discovery mode (max ${maxPages} pages, dryRun=${dryRun})`);
   
   for (let page = 1; page <= maxPages; page++) {
     // Check safety limits
@@ -804,7 +913,7 @@ async function runDiscoveryMode(
     const indexUrl = buildIndexPageUrl(page);
     console.log(`[Page ${page}] Fetching: ${indexUrl}`);
     
-    const html = await scrapeWithFirecrawl(indexUrl, firecrawlKey, safety, true);
+    const html = await scrapeWithFirecrawl(indexUrl, firecrawlKey, safety, true, dryRun);
     
     if (!html) {
       errorLog.push({
@@ -818,6 +927,14 @@ async function runDiscoveryMode(
     }
 
     stats.pagesProcessed++;
+    
+    // In dry run mode with simulated HTML, we can't parse real listings
+    if (dryRun) {
+      console.log(`[DRY RUN] Page ${page}: Would parse listings from ${indexUrl}`);
+      // Simulate finding some listings for testing
+      stats.listingsFound += 20;
+      continue;
+    }
     
     // Parse listings from index page
     const listings = parseIndexPageListings(html);
@@ -851,6 +968,19 @@ async function runDiscoveryMode(
         continue;
       }
 
+      // Generate content hash
+      const contentHash = await createContentHash(listing);
+      
+      // ===== CRITICAL: Save to raw_listings FIRST =====
+      const rawListingId = await saveRawListing(supabase, listing, html, contentHash, stats);
+      if (!rawListingId) {
+        console.error(`Failed to save raw listing for ${listing.url}`);
+        safety.failedParses++;
+        continue;
+      }
+      
+      console.log(`Saved raw listing ${rawListingId} for ${listing.url}`);
+
       // Check if listing exists in database
       const { data: existingListing } = await supabase
         .from('listings')
@@ -859,7 +989,6 @@ async function runDiscoveryMode(
         .maybeSingle();
 
       const { make, model } = extractMakeModel(listing.title);
-      const contentHash = await createContentHash(listing);
       const fingerprint = generateVehicleFingerprint({
         make,
         model,
@@ -904,6 +1033,7 @@ async function runDiscoveryMode(
               mileage: listing.mileage,
               last_seen_at: now,
               content_hash: contentHash,
+              raw_listing_id: rawListingId,
             })
             .eq('id', returnedListingId);
 
@@ -924,7 +1054,7 @@ async function runDiscoveryMode(
           // Only scrape detail if we have budget
           const budgetCheck = checkSafetyLimits(safety, safetyConfig);
           if (!budgetCheck.shouldStop) {
-            const detailHtml = await scrapeWithFirecrawl(listing.url, firecrawlKey, safety, false);
+            const detailHtml = await scrapeWithFirecrawl(listing.url, firecrawlKey, safety, false, dryRun);
             if (detailHtml) {
               const detailData = extractDetailPageData(detailHtml);
               licensePlateHash = await hashLicensePlate(detailData.licensePlate);
@@ -938,7 +1068,7 @@ async function runDiscoveryMode(
           const priceBucket = listing.price ? Math.floor(listing.price / 5000) * 5000 : null;
           const mileageBucket = listing.mileage ? Math.floor(listing.mileage / 5000) * 5000 : null;
 
-          // Insert new listing
+          // Insert new listing with raw_listing_id link
           const { data: newListing, error: insertError } = await supabase
             .from('listings')
             .insert({
@@ -968,6 +1098,7 @@ async function runDiscoveryMode(
               mileage_bucket: mileageBucket,
               outbound_sources: listing.outboundSources,
               options_raw: options,
+              raw_listing_id: rawListingId,
             })
             .select('id')
             .single();
@@ -990,6 +1121,14 @@ async function runDiscoveryMode(
       } else {
         // EXISTING LISTING - check for updates
         
+        // Update raw_listing_id link if not set
+        if (!existingListing.raw_listing_id) {
+          await supabase
+            .from('listings')
+            .update({ raw_listing_id: rawListingId })
+            .eq('id', existingListing.id);
+        }
+        
         // Handle returned listings (was gone_suspected, now seen again)
         if (existingListing.status === 'gone_suspected') {
           const daysSinceGone = daysSince(existingListing.gone_detected_at);
@@ -1004,6 +1143,7 @@ async function runDiscoveryMode(
                 mileage: listing.mileage,
                 last_seen_at: now,
                 content_hash: contentHash,
+                raw_listing_id: rawListingId,
               })
               .eq('id', existingListing.id);
 
@@ -1180,6 +1320,7 @@ serve(async (req) => {
     listingsSoldConfirmed: 0,
     listingsReturned: 0,
     errorsCount: 0,
+    rawListingsSaved: 0,
   };
 
   const safety: SafetyState = {
@@ -1193,6 +1334,7 @@ serve(async (req) => {
     unknownYearPriceCount: 0,
     errors: 0,
     stopReason: null,
+    rawListingsSaved: 0,
   };
 
   try {
@@ -1203,9 +1345,10 @@ serve(async (req) => {
       targetMakes = [] as string[],
       maxPages = 50,
       maxCredits = DEFAULT_MAX_CREDITS_PER_RUN,
+      dryRun = false,
     } = body;
     
-    console.log(`Starting Gaspedaal ${mode} job ${jobId}`);
+    console.log(`Starting Gaspedaal ${mode} job ${jobId} (dryRun=${dryRun})`);
     console.log(`Config: maxPages=${maxPages}, maxCredits=${maxCredits}, targetMakes=${targetMakes.join(',') || 'all'}`);
 
     // Initialize clients
@@ -1213,7 +1356,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
 
-    if (!firecrawlKey) {
+    if (!firecrawlKey && !dryRun) {
       throw new Error('FIRECRAWL_API_KEY is not configured');
     }
 
@@ -1235,13 +1378,15 @@ serve(async (req) => {
 
     console.log('Safety config:', safetyConfig);
 
-    // Get today's credit usage
-    safety.creditsUsedToday = await getTodayCreditUsage(supabase, 'gaspedaal');
-    console.log(`Credits used today before job: ${safety.creditsUsedToday}`);
+    // Get today's credit usage (skip in dry run)
+    if (!dryRun) {
+      safety.creditsUsedToday = await getTodayCreditUsage(supabase, 'gaspedaal');
+      console.log(`Credits used today before job: ${safety.creditsUsedToday}`);
 
-    // Pre-flight budget check
-    if (safety.creditsUsedToday >= safetyConfig.maxCreditsPerDay) {
-      throw new Error(`Daily credit budget already reached (${safety.creditsUsedToday}/${safetyConfig.maxCreditsPerDay})`);
+      // Pre-flight budget check
+      if (safety.creditsUsedToday >= safetyConfig.maxCreditsPerDay) {
+        throw new Error(`Daily credit budget already reached (${safety.creditsUsedToday}/${safetyConfig.maxCreditsPerDay})`);
+      }
     }
 
     // Update job status to running
@@ -1258,12 +1403,13 @@ serve(async (req) => {
     if (mode === 'discovery') {
       await runDiscoveryMode(
         supabase,
-        firecrawlKey,
+        firecrawlKey || '',
         safety,
         safetyConfig,
         stats,
         errorLog,
-        maxPages
+        maxPages,
+        dryRun
       );
     } else if (mode === 'lifecycle_check') {
       await runLifecycleCheckMode(
@@ -1296,39 +1442,43 @@ serve(async (req) => {
         listings_updated: stats.listingsUpdated,
         listings_gone: stats.listingsGoneSuspected + stats.listingsSoldConfirmed,
         errors_count: stats.errorsCount,
-        credits_used: safety.creditsUsedThisRun,
+        credits_used: dryRun ? 0 : safety.creditsUsedThisRun,
         sitemap_requests: safety.indexRequests,
         detail_requests: safety.detailRequests,
         parse_success_rate: parseSuccessRate,
         error_rate: errorRate,
-        stop_reason: safety.stopReason,
+        stop_reason: dryRun ? 'dry_run_complete' : safety.stopReason,
         error_log: errorLog.slice(0, 100),
       })
       .eq('id', jobId);
 
-    // Update daily credit usage
-    await updateDailyCreditUsage(
-      supabase,
-      'gaspedaal',
-      safety.creditsUsedThisRun,
-      safety.indexRequests,
-      safety.detailRequests
-    );
+    // Update daily credit usage (skip in dry run)
+    if (!dryRun) {
+      await updateDailyCreditUsage(
+        supabase,
+        'gaspedaal',
+        safety.creditsUsedThisRun,
+        safety.indexRequests,
+        safety.detailRequests
+      );
+    }
 
     const result = {
       success: true,
       jobId,
       mode,
+      dryRun,
       duration: durationSeconds,
       stats: {
         ...stats,
-        creditsUsed: safety.creditsUsedThisRun,
+        creditsUsed: dryRun ? 0 : safety.creditsUsedThisRun,
         indexRequests: safety.indexRequests,
         detailRequests: safety.detailRequests,
         parseSuccessRate: (parseSuccessRate * 100).toFixed(1) + '%',
         errorRate: (errorRate * 100).toFixed(1) + '%',
+        rawListingsSaved: stats.rawListingsSaved,
       },
-      stopReason: safety.stopReason,
+      stopReason: dryRun ? 'dry_run_complete' : safety.stopReason,
     };
 
     console.log('Job completed:', JSON.stringify(result));

@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { GaspedaalControlPanel } from '@/components/admin/GaspedaalControlPanel';
 import { ScraperJobHistory } from '@/components/admin/ScraperJobHistory';
+import { ScrapeAuditPanel } from '@/components/admin/ScrapeAuditPanel';
 import { PortalConfigPanel } from '@/components/admin/PortalConfigPanel';
 import { CrawlerJobsTable } from '@/components/admin/CrawlerJobsTable';
 import { SystemSettingsCard } from '@/components/admin/SystemSettingsCard';
@@ -57,6 +58,9 @@ export default function Admin() {
 
         {/* Gaspedaal Job History */}
         <ScraperJobHistory source="gaspedaal" />
+
+        {/* Scrape Audit Panel - Data Quality Monitoring */}
+        <ScrapeAuditPanel />
 
         {/* Rest of Admin UI */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
