@@ -158,6 +158,7 @@ export type Database = {
       }
       listings: {
         Row: {
+          battery_capacity_kwh: number | null
           body_type: string | null
           color: string | null
           content_hash: string | null
@@ -166,12 +167,18 @@ export type Database = {
           dealer_city: string | null
           dealer_id: string | null
           dealer_name: string | null
+          description_raw: string | null
           doors: number | null
+          drivetrain: string | null
+          electric_range_km: number | null
+          engine_cc: number | null
           first_seen_at: string
           fuel_type: string | null
           generation: string | null
           gone_detected_at: string | null
           id: string
+          image_count: number | null
+          image_url_main: string | null
           is_normalized: boolean | null
           last_seen_at: string
           license_plate: string | null
@@ -183,6 +190,7 @@ export type Database = {
           normalization_confidence: number | null
           options_parsed: string[] | null
           options_raw: string | null
+          outbound_links: Json | null
           outbound_sources: string[] | null
           power_pk: number | null
           previous_price: number | null
@@ -198,9 +206,11 @@ export type Database = {
           transmission: string | null
           url: string
           vehicle_fingerprint: string | null
+          vin: string | null
           year: number | null
         }
         Insert: {
+          battery_capacity_kwh?: number | null
           body_type?: string | null
           color?: string | null
           content_hash?: string | null
@@ -209,12 +219,18 @@ export type Database = {
           dealer_city?: string | null
           dealer_id?: string | null
           dealer_name?: string | null
+          description_raw?: string | null
           doors?: number | null
+          drivetrain?: string | null
+          electric_range_km?: number | null
+          engine_cc?: number | null
           first_seen_at?: string
           fuel_type?: string | null
           generation?: string | null
           gone_detected_at?: string | null
           id?: string
+          image_count?: number | null
+          image_url_main?: string | null
           is_normalized?: boolean | null
           last_seen_at?: string
           license_plate?: string | null
@@ -226,6 +242,7 @@ export type Database = {
           normalization_confidence?: number | null
           options_parsed?: string[] | null
           options_raw?: string | null
+          outbound_links?: Json | null
           outbound_sources?: string[] | null
           power_pk?: number | null
           previous_price?: number | null
@@ -241,9 +258,11 @@ export type Database = {
           transmission?: string | null
           url: string
           vehicle_fingerprint?: string | null
+          vin?: string | null
           year?: number | null
         }
         Update: {
+          battery_capacity_kwh?: number | null
           body_type?: string | null
           color?: string | null
           content_hash?: string | null
@@ -252,12 +271,18 @@ export type Database = {
           dealer_city?: string | null
           dealer_id?: string | null
           dealer_name?: string | null
+          description_raw?: string | null
           doors?: number | null
+          drivetrain?: string | null
+          electric_range_km?: number | null
+          engine_cc?: number | null
           first_seen_at?: string
           fuel_type?: string | null
           generation?: string | null
           gone_detected_at?: string | null
           id?: string
+          image_count?: number | null
+          image_url_main?: string | null
           is_normalized?: boolean | null
           last_seen_at?: string
           license_plate?: string | null
@@ -269,6 +294,7 @@ export type Database = {
           normalization_confidence?: number | null
           options_parsed?: string[] | null
           options_raw?: string | null
+          outbound_links?: Json | null
           outbound_sources?: string[] | null
           power_pk?: number | null
           previous_price?: number | null
@@ -284,6 +310,7 @@ export type Database = {
           transmission?: string | null
           url?: string
           vehicle_fingerprint?: string | null
+          vin?: string | null
           year?: number | null
         }
         Relationships: [
@@ -430,9 +457,19 @@ export type Database = {
           dealer_city_raw: string | null
           dealer_name_raw: string | null
           dealer_page_url: string | null
+          description_raw: string | null
+          detail_scraped_at: string | null
           first_seen_at: string
+          html_detail: string | null
+          html_detail_size: number | null
           id: string
+          image_count: number | null
+          image_url_main: string | null
           last_seen_at: string
+          options_raw_html: string | null
+          options_raw_list: string[] | null
+          options_raw_text: string | null
+          outbound_links: Json | null
           portal_listing_id: string | null
           raw_mileage: string | null
           raw_price: string | null
@@ -449,9 +486,19 @@ export type Database = {
           dealer_city_raw?: string | null
           dealer_name_raw?: string | null
           dealer_page_url?: string | null
+          description_raw?: string | null
+          detail_scraped_at?: string | null
           first_seen_at?: string
+          html_detail?: string | null
+          html_detail_size?: number | null
           id?: string
+          image_count?: number | null
+          image_url_main?: string | null
           last_seen_at?: string
+          options_raw_html?: string | null
+          options_raw_list?: string[] | null
+          options_raw_text?: string | null
+          outbound_links?: Json | null
           portal_listing_id?: string | null
           raw_mileage?: string | null
           raw_price?: string | null
@@ -468,9 +515,19 @@ export type Database = {
           dealer_city_raw?: string | null
           dealer_name_raw?: string | null
           dealer_page_url?: string | null
+          description_raw?: string | null
+          detail_scraped_at?: string | null
           first_seen_at?: string
+          html_detail?: string | null
+          html_detail_size?: number | null
           id?: string
+          image_count?: number | null
+          image_url_main?: string | null
           last_seen_at?: string
+          options_raw_html?: string | null
+          options_raw_list?: string[] | null
+          options_raw_text?: string | null
+          outbound_links?: Json | null
           portal_listing_id?: string | null
           raw_mileage?: string | null
           raw_price?: string | null

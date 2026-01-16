@@ -1,8 +1,16 @@
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Progress } from '@/components/ui/progress';
+import { 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from '@/components/ui/select';
 import { useScraperStatus, useScraperActions } from '@/hooks/useScraperStatus';
 import {
   Play,
@@ -17,12 +25,18 @@ import {
   Zap,
   Shield,
   Activity,
+  FlaskConical,
+  List,
+  FileSearch,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function GaspedaalControlPanel() {
   const { data: status, isLoading } = useScraperStatus('gaspedaal');
   const { runDiscovery, runDeepSync, togglePause } = useScraperActions('gaspedaal');
+  
+  // Test configuration state
+  const [testPages, setTestPages] = useState<string>('5');
 
   if (isLoading || !status) {
     return (
@@ -82,6 +96,13 @@ export function GaspedaalControlPanel() {
     if (creditUsage.percentage >= 80) return 'bg-warning';
     return 'bg-success';
   };
+
+  const anyMutationPending = runDiscovery.isPending || runDeepSync.isPending;
+  const maxPages = parseInt(testPages, 10);
+
+  // Estimate credits for different modes
+  const estimateIndexOnlyCredits = maxPages;
+  const estimateFullCredits = maxPages * 21; // ~20 listings per page + 1 index page
 
   return (
     <Card className="bg-card border-border border-2 border-primary/20">
@@ -184,6 +205,12 @@ export function GaspedaalControlPanel() {
                 <span className="text-sm font-medium text-foreground capitalize">
                   {lastJob.jobType.replace('_', ' ')}
                 </span>
+                {lastJob.stopReason?.includes('dry_run') && (
+                  <Badge variant="outline" className="text-xs">Dry Run</Badge>
+                )}
+                {lastJob.stopReason?.includes('index_only') && (
+                  <Badge variant="outline" className="text-xs">Index Only</Badge>
+                )}
               </div>
               <span className="text-xs text-muted-foreground">
                 {lastJob.durationSeconds ? `${Math.floor(lastJob.durationSeconds / 60)}m ${lastJob.durationSeconds % 60}s` : 'In progress...'}
@@ -242,7 +269,7 @@ export function GaspedaalControlPanel() {
             </div>
 
             {/* Safety Stop Warning */}
-            {lastJob.stopReason && (
+            {lastJob.stopReason && !lastJob.stopReason.includes('complete') && (
               <div className="mt-2 p-2 rounded bg-destructive/10 border border-destructive/20 flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
                 <div className="text-xs text-destructive">
@@ -262,21 +289,86 @@ export function GaspedaalControlPanel() {
           </div>
         )}
 
-        {/* Action Buttons */}
+        {/* Test Controls Section */}
+        <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
+          <div className="flex items-center gap-2 mb-3">
+            <FlaskConical className="h-4 w-4 text-primary" />
+            <span className="text-sm font-medium text-foreground">Test Modus</span>
+          </div>
+          
+          <div className="flex items-center gap-3 mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Pagina's:</span>
+              <Select value={testPages} onValueChange={setTestPages}>
+                <SelectTrigger className="w-20 h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">1</SelectItem>
+                  <SelectItem value="3">3</SelectItem>
+                  <SelectItem value="5">5</SelectItem>
+                  <SelectItem value="10">10</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Index only: ~{estimateIndexOnlyCredits} credits | 
+              Volledig: ~{estimateFullCredits} credits
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {/* Dry Run Button */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => runDiscovery.mutate({ maxPages, dryRun: true, indexOnly: false })}
+              disabled={anyMutationPending || isRunning || config.paused}
+              className="border-primary/30 hover:border-primary"
+            >
+              {runDiscovery.isPending ? (
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <FlaskConical className="h-4 w-4 mr-2" />
+              )}
+              Dry Run (0 credits)
+            </Button>
+
+            {/* Index Only Button */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => runDiscovery.mutate({ maxPages, dryRun: false, indexOnly: true })}
+              disabled={anyMutationPending || isRunning || config.paused || creditUsage.percentage >= 100}
+              className="border-warning/30 hover:border-warning"
+            >
+              {runDiscovery.isPending ? (
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <List className="h-4 w-4 mr-2" />
+              )}
+              Index Only (~{estimateIndexOnlyCredits} cr)
+            </Button>
+
+            {/* Full Test Button */}
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => runDiscovery.mutate({ maxPages, dryRun: false, indexOnly: false })}
+              disabled={anyMutationPending || isRunning || config.paused || creditUsage.percentage >= 100}
+            >
+              {runDiscovery.isPending ? (
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <FileSearch className="h-4 w-4 mr-2" />
+              )}
+              Index + Detail (~{estimateFullCredits} cr)
+            </Button>
+          </div>
+        </div>
+
+        {/* Regular Action Buttons */}
         <div className="flex items-center gap-2 pt-2 border-t border-border">
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => runDiscovery.mutate()}
-            disabled={runDiscovery.isPending || isRunning || config.paused || creditUsage.percentage >= 100}
-          >
-            {runDiscovery.isPending ? (
-              <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <Play className="h-4 w-4 mr-2" />
-            )}
-            Run Discovery
-          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -288,7 +380,7 @@ export function GaspedaalControlPanel() {
             ) : (
               <RefreshCw className="h-4 w-4 mr-2" />
             )}
-            Run Deep Sync
+            Lifecycle Check
           </Button>
           {config.paused ? (
             <Button
