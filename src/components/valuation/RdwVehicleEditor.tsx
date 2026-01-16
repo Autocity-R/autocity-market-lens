@@ -168,74 +168,74 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
 
   return (
     <Card className="bg-muted/50 border-primary/30">
-      <CardContent className="p-4 space-y-4">
+      <CardContent className="p-3 space-y-3">
         {/* Header */}
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Car className="h-5 w-5 text-primary" />
+        <div className="flex items-center gap-2">
+          <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+            <Car className="h-4 w-4 text-primary" />
           </div>
-          <div className="flex-1">
-            <h4 className="font-semibold text-foreground">
-              Voertuig gevonden: {vehicle.licensePlate}
+          <div className="flex-1 min-w-0">
+            <h4 className="font-semibold text-sm text-foreground truncate">
+              Voertuig: {vehicle.licensePlate}
             </h4>
-            <p className="text-sm text-muted-foreground">
-              Controleer en corrigeer de gegevens hieronder
+            <p className="text-xs text-muted-foreground">
+              Controleer de gegevens
             </p>
           </div>
         </div>
 
-        {/* Fields - Stacked Layout */}
-        <div className="space-y-3">
-          {/* Row 1: Merk + Model */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <Label className="text-xs font-medium text-muted-foreground">Merk</Label>
-                <SourceBadge source={getFieldSource(editedVehicle.make)} />
-              </div>
-              <Input
-                value={getFieldValue(editedVehicle.make, '')}
-                onChange={(e) => updateField('make', e.target.value)}
-                className="bg-background border-border h-9"
-              />
+        {/* Fields - Single Column Layout */}
+        <div className="space-y-2.5">
+          {/* Merk - full width */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <Label className="text-[11px] font-medium text-muted-foreground">Merk</Label>
+              <SourceBadge source={getFieldSource(editedVehicle.make)} />
             </div>
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <Label className="text-xs font-medium text-muted-foreground">Model</Label>
-                <SourceBadge source={getFieldSource(editedVehicle.model)} />
-              </div>
-              <Input
-                value={getFieldValue(editedVehicle.model, '')}
-                onChange={(e) => updateField('model', e.target.value)}
-                className="bg-background border-border h-9"
-              />
-            </div>
+            <Input
+              value={getFieldValue(editedVehicle.make, '')}
+              onChange={(e) => updateField('make', e.target.value)}
+              className="bg-background border-border h-8 text-sm"
+            />
           </div>
 
-          {/* Row 2: Bouwjaar + Brandstof */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <Label className="text-xs font-medium text-muted-foreground">Bouwjaar</Label>
+          {/* Model - full width */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <Label className="text-[11px] font-medium text-muted-foreground">Model</Label>
+              <SourceBadge source={getFieldSource(editedVehicle.model)} />
+            </div>
+            <Input
+              value={getFieldValue(editedVehicle.model, '')}
+              onChange={(e) => updateField('model', e.target.value)}
+              className="bg-background border-border h-8 text-sm"
+            />
+          </div>
+
+          {/* Bouwjaar + Brandstof */}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <Label className="text-[11px] font-medium text-muted-foreground">Bouwjaar</Label>
                 <SourceBadge source={getFieldSource(editedVehicle.year)} />
               </div>
               <Input
                 type="number"
                 value={getFieldValue(editedVehicle.year, new Date().getFullYear())}
                 onChange={(e) => updateField('year', parseInt(e.target.value) || 0)}
-                className="bg-background border-border h-9"
+                className="bg-background border-border h-8 text-sm"
               />
             </div>
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <Label className="text-xs font-medium text-muted-foreground">Brandstof</Label>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <Label className="text-[11px] font-medium text-muted-foreground">Brandstof</Label>
                 <SourceBadge source={getFieldSource(editedVehicle.fuelType)} />
               </div>
               <Select
                 value={getFieldValue(editedVehicle.fuelType, '')}
                 onValueChange={(v) => updateField('fuelType', v)}
               >
-                <SelectTrigger className="bg-background border-border h-9">
+                <SelectTrigger className="bg-background border-border h-8 text-sm">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -249,11 +249,11 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
             </div>
           </div>
 
-          {/* Row 3: Transmissie + Carrosserie */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <Label className="text-xs font-medium text-muted-foreground">Transmissie</Label>
+          {/* Transmissie + Carrosserie */}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <Label className="text-[11px] font-medium text-muted-foreground">Transmissie</Label>
                 <SourceBadge 
                   source={getFieldSource(editedVehicle.transmission)} 
                   note={editedVehicle.transmission?.note}
@@ -264,10 +264,10 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
                 onValueChange={(v) => updateField('transmission', v)}
               >
                 <SelectTrigger className={cn(
-                  "bg-background border-border h-9",
+                  "bg-background border-border h-8 text-sm",
                   !getFieldValue(editedVehicle.transmission, '') && "border-destructive/50"
                 )}>
-                  <SelectValue placeholder="Selecteer..." />
+                  <SelectValue placeholder="Kies..." />
                 </SelectTrigger>
                 <SelectContent>
                   {transmissions?.map((t) => (
@@ -278,9 +278,9 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <Label className="text-xs font-medium text-muted-foreground">Carrosserie</Label>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <Label className="text-[11px] font-medium text-muted-foreground">Carrosserie</Label>
                 <SourceBadge 
                   source={getFieldSource(editedVehicle.bodyType)}
                   note={editedVehicle.bodyType?.note}
@@ -291,10 +291,10 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
                 onValueChange={(v) => updateField('bodyType', v)}
               >
                 <SelectTrigger className={cn(
-                  "bg-background border-border h-9",
+                  "bg-background border-border h-8 text-sm",
                   !getFieldValue(editedVehicle.bodyType, '') && "border-destructive/50"
                 )}>
-                  <SelectValue placeholder="Selecteer..." />
+                  <SelectValue placeholder="Kies..." />
                 </SelectTrigger>
                 <SelectContent>
                   {bodyTypes?.map((bt) => (
@@ -307,60 +307,68 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
             </div>
           </div>
 
-          {/* Row 4: Kleur + Vermogen */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <Label className="text-xs font-medium text-muted-foreground">Kleur</Label>
-                <SourceBadge source={getFieldSource(editedVehicle.color)} />
-              </div>
-              <Input
-                value={getFieldValue(editedVehicle.color, null) || ''}
-                onChange={(e) => updateField('color', e.target.value || null)}
-                className="bg-background border-border h-9"
-                placeholder="Onbekend"
+          {/* Kleur - full width */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <Label className="text-[11px] font-medium text-muted-foreground">Kleur</Label>
+              <SourceBadge source={getFieldSource(editedVehicle.color)} />
+            </div>
+            <Input
+              value={getFieldValue(editedVehicle.color, null) || ''}
+              onChange={(e) => updateField('color', e.target.value || null)}
+              className="bg-background border-border h-8 text-sm"
+              placeholder="Onbekend"
+            />
+          </div>
+
+          {/* Vermogen - full width with proper toggle */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <Label className="text-[11px] font-medium text-muted-foreground">Vermogen</Label>
+              <SourceBadge 
+                source={getFieldSource(editedVehicle.power)}
+                note={editedVehicle.power?.note}
               />
             </div>
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <Label className="text-xs font-medium text-muted-foreground">Vermogen</Label>
-                <SourceBadge 
-                  source={getFieldSource(editedVehicle.power)}
-                  note={editedVehicle.power?.note}
-                />
-              </div>
-              <div className="flex gap-1.5">
-                <Input
-                  type="number"
-                  value={powerUnit === 'hp' 
-                    ? (getFieldValue(editedVehicle.power, null)?.hp || '') 
-                    : (getFieldValue(editedVehicle.power, null)?.kw || '')
-                  }
-                  onChange={(e) => updatePower(parseInt(e.target.value) || 0, powerUnit)}
+            <div className="flex gap-2">
+              <Input
+                type="number"
+                value={powerUnit === 'hp' 
+                  ? (getFieldValue(editedVehicle.power, null)?.hp || '') 
+                  : (getFieldValue(editedVehicle.power, null)?.kw || '')
+                }
+                onChange={(e) => updatePower(parseInt(e.target.value) || 0, powerUnit)}
+                className={cn(
+                  "bg-background border-border h-8 text-sm flex-1",
+                  !getFieldValue(editedVehicle.power, null) && "border-warning/50"
+                )}
+                placeholder="bijv. 150"
+              />
+              <div className="flex shrink-0 rounded-md border border-border overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setPowerUnit('hp')}
                   className={cn(
-                    "bg-background border-border h-9 flex-1 min-w-0",
-                    !getFieldValue(editedVehicle.power, null) && "border-warning/50"
+                    "px-3 h-8 text-xs font-medium transition-colors",
+                    powerUnit === 'hp' 
+                      ? "bg-primary text-primary-foreground" 
+                      : "bg-background text-muted-foreground hover:bg-muted"
                   )}
-                  placeholder="Optioneel"
-                />
-                <div className="flex shrink-0 rounded-md border border-border overflow-hidden">
-                  <Toggle
-                    pressed={powerUnit === 'hp'}
-                    onPressedChange={() => setPowerUnit('hp')}
-                    className="rounded-none border-0 w-9 h-9 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
-                    size="sm"
-                  >
-                    PK
-                  </Toggle>
-                  <Toggle
-                    pressed={powerUnit === 'kw'}
-                    onPressedChange={() => setPowerUnit('kw')}
-                    className="rounded-none border-0 w-9 h-9 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
-                    size="sm"
-                  >
-                    kW
-                  </Toggle>
-                </div>
+                >
+                  PK
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPowerUnit('kw')}
+                  className={cn(
+                    "px-3 h-8 text-xs font-medium transition-colors border-l border-border",
+                    powerUnit === 'kw' 
+                      ? "bg-primary text-primary-foreground" 
+                      : "bg-background text-muted-foreground hover:bg-muted"
+                  )}
+                >
+                  kW
+                </button>
               </div>
             </div>
           </div>
@@ -368,38 +376,40 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
 
         {/* Warnings and Issues */}
         {(warnings.length > 0 || issues.length > 0) && (
-          <div className="space-y-2 pt-2 border-t border-border">
+          <div className="space-y-1.5 pt-2 border-t border-border">
             {warnings.map((warning, i) => (
-              <div key={i} className="flex items-center gap-2 text-xs text-warning">
-                <Zap className="h-3.5 w-3.5" />
-                <span>{warning}</span>
+              <div key={i} className="flex items-center gap-1.5 text-[11px] text-warning">
+                <Zap className="h-3 w-3 shrink-0" />
+                <span className="truncate">{warning}</span>
               </div>
             ))}
             {issues.map((issue, i) => (
-              <div key={i} className="flex items-center gap-2 text-xs text-destructive">
-                <AlertCircle className="h-3.5 w-3.5" />
-                <span>{issue} ontbreekt - vul in voor nauwkeurige taxatie</span>
+              <div key={i} className="flex items-center gap-1.5 text-[11px] text-destructive">
+                <AlertCircle className="h-3 w-3 shrink-0" />
+                <span className="truncate">{issue} ontbreekt</span>
               </div>
             ))}
           </div>
         )}
 
         {/* Actions */}
-        <div className="flex gap-2 pt-2">
+        <div className="flex gap-2 pt-1">
           <Button
             variant="outline"
-            className="flex-1"
+            size="sm"
+            className="flex-1 h-8"
             onClick={onCancel}
           >
             Annuleren
           </Button>
           <Button
-            className="flex-1"
+            size="sm"
+            className="flex-1 h-8"
             onClick={handleConfirm}
             disabled={!hasRequiredFields}
           >
-            <CheckCircle className="h-4 w-4 mr-2" />
-            Bevestig en ga verder
+            <CheckCircle className="h-3.5 w-3.5 mr-1.5" />
+            Bevestigen
           </Button>
         </div>
       </CardContent>
