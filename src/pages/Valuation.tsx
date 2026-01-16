@@ -12,6 +12,7 @@ import { useValuation, ValuationRequest, ValuationResult } from '@/hooks/useValu
 import { useVehicleMakes, useVehicleModels, useVehicleFuels, useVehicleTransmissions, useVehicleBodyTypes, useVehicleYears } from '@/hooks/useVehicleValues';
 import { RdwVehicle } from '@/hooks/useRdwLookup';
 import { LicensePlateInput } from '@/components/valuation/LicensePlateInput';
+import { VehicleSummaryCard } from '@/components/valuation/VehicleSummaryCard';
 import { OptionsSelector } from '@/components/valuation/OptionsSelector';
 import { PriceBreakdown } from '@/components/valuation/PriceBreakdown';
 import { CourantheidMeter } from '@/components/valuation/CourantheidMeter';
@@ -56,6 +57,7 @@ export default function Valuation() {
   const [result, setResult] = useState<ValuationResult | null>(null);
   const [powerUnit, setPowerUnit] = useState<'hp' | 'kw'>('hp');
   const [activeTab, setActiveTab] = useState<'kenteken' | 'handmatig'>('kenteken');
+  const [confirmedVehicle, setConfirmedVehicle] = useState<RdwVehicle | null>(null);
   
   // Vehicle values data
   const { data: makes, isLoading: makesLoading } = useVehicleMakes();
@@ -121,7 +123,23 @@ export default function Valuation() {
       power: vehicle.power,
       options: [],
     });
-    setActiveTab('handmatig'); // Switch to manual tab to complete details
+    setConfirmedVehicle(vehicle); // Store confirmed vehicle, stay on kenteken tab
+  };
+
+  const handleResetVehicle = () => {
+    setConfirmedVehicle(null);
+    setFormData({
+      make: '',
+      model: '',
+      year: new Date().getFullYear() - 3,
+      mileage: 50000,
+      fuelType: '',
+      transmission: '',
+      bodyType: '',
+      power: undefined,
+      options: [],
+    });
+    setResult(null);
   };
 
   const handleAnalyze = async () => {
@@ -172,8 +190,31 @@ export default function Valuation() {
                   </TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="kenteken" className="mt-0">
-                  <LicensePlateInput onVehicleFound={handleRdwVehicleFound} />
+                <TabsContent value="kenteken" className="mt-0 space-y-4">
+                  {!confirmedVehicle ? (
+                    <LicensePlateInput onVehicleFound={handleRdwVehicleFound} />
+                  ) : (
+                    <>
+                      <VehicleSummaryCard 
+                        vehicle={confirmedVehicle} 
+                        onReset={handleResetVehicle}
+                      />
+                      
+                      {/* Mileage input */}
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Kilometerstand *</Label>
+                        <Input
+                          type="number"
+                          value={formData.mileage || ''}
+                          onChange={(e) => handleInputChange('mileage', parseInt(e.target.value) || 0)}
+                          placeholder="bijv. 45000"
+                          min={0}
+                          step={1000}
+                          className="mt-1 bg-muted border-border"
+                        />
+                      </div>
+                    </>
+                  )}
                 </TabsContent>
 
                 <TabsContent value="handmatig" className="mt-0 space-y-4">
