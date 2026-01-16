@@ -76,6 +76,15 @@ function SourceBadge({ source, note }: { source: DataSource; note?: string }) {
   );
 }
 
+// Helper to safely get field value
+function getFieldValue<T>(field: VehicleField<T> | undefined, fallback: T): T {
+  return field?.value ?? fallback;
+}
+
+function getFieldSource(field: VehicleField<unknown> | undefined): DataSource {
+  return field?.source ?? 'missing';
+}
+
 export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEditorProps) {
   const { data: fuels } = useVehicleFuels();
   const { data: transmissions } = useVehicleTransmissions();
@@ -83,11 +92,25 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
 
   const [powerUnit, setPowerUnit] = useState<'hp' | 'kw'>('hp');
   
+  // Ensure vehicle has proper structure with safe defaults
+  const createSafeVehicle = (v: RdwVehicleExtended): RdwVehicleExtended => ({
+    licensePlate: v.licensePlate || '',
+    make: v.make ?? { value: '', source: 'missing' },
+    model: v.model ?? { value: '', source: 'missing' },
+    year: v.year ?? { value: new Date().getFullYear(), source: 'missing' },
+    fuelType: v.fuelType ?? { value: '', source: 'missing' },
+    transmission: v.transmission ?? { value: '', source: 'missing' },
+    bodyType: v.bodyType ?? { value: '', source: 'missing' },
+    power: v.power ?? { value: null, source: 'missing' },
+    color: v.color ?? { value: null, source: 'missing' },
+    doors: v.doors ?? { value: 4, source: 'missing' },
+  });
+
   // Editable state
-  const [editedVehicle, setEditedVehicle] = useState<RdwVehicleExtended>(vehicle);
+  const [editedVehicle, setEditedVehicle] = useState<RdwVehicleExtended>(() => createSafeVehicle(vehicle));
 
   useEffect(() => {
-    setEditedVehicle(vehicle);
+    setEditedVehicle(createSafeVehicle(vehicle));
   }, [vehicle]);
 
   const updateField = <T,>(
@@ -95,15 +118,17 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
     value: T,
     markAsEdited = true
   ) => {
-    setEditedVehicle(prev => ({
-      ...prev,
-      [field]: {
-        ...(prev[field] as VehicleField<T>),
-        value,
-        source: markAsEdited ? 'inferred' : (prev[field] as VehicleField<T>).source,
-        note: markAsEdited ? 'Handmatig aangepast' : (prev[field] as VehicleField<T>).note,
-      },
-    }));
+    setEditedVehicle(prev => {
+      const currentField = prev[field] as VehicleField<T> | undefined;
+      return {
+        ...prev,
+        [field]: {
+          value,
+          source: markAsEdited ? 'inferred' : (currentField?.source ?? 'missing'),
+          note: markAsEdited ? 'Handmatig aangepast' : currentField?.note,
+        },
+      };
+    });
   };
 
   const updatePower = (value: number, unit: 'hp' | 'kw') => {
@@ -126,22 +151,22 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
 
   // Check if all required fields have values
   const hasRequiredFields = 
-    editedVehicle.make.value && 
-    editedVehicle.model.value && 
-    editedVehicle.fuelType.value &&
-    editedVehicle.transmission.value &&
-    editedVehicle.bodyType.value;
+    getFieldValue(editedVehicle.make, '') && 
+    getFieldValue(editedVehicle.model, '') && 
+    getFieldValue(editedVehicle.fuelType, '') &&
+    getFieldValue(editedVehicle.transmission, '') &&
+    getFieldValue(editedVehicle.bodyType, '');
 
   // Count issues
   const issues = [
-    !editedVehicle.transmission.value && 'Transmissie',
-    !editedVehicle.bodyType.value && 'Carrosserie',
-    !editedVehicle.power.value && 'Vermogen',
+    !getFieldValue(editedVehicle.transmission, '') && 'Transmissie',
+    !getFieldValue(editedVehicle.bodyType, '') && 'Carrosserie',
+    !getFieldValue(editedVehicle.power, null) && 'Vermogen',
   ].filter(Boolean);
 
   const warnings = [
-    editedVehicle.transmission.source === 'inferred' && editedVehicle.transmission.note,
-    editedVehicle.bodyType.source === 'inferred' && editedVehicle.bodyType.note,
+    getFieldSource(editedVehicle.transmission) === 'inferred' && editedVehicle.transmission?.note,
+    getFieldSource(editedVehicle.bodyType) === 'inferred' && editedVehicle.bodyType?.note,
   ].filter(Boolean);
 
   return (
@@ -168,10 +193,10 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <Label className="text-xs text-muted-foreground">Merk</Label>
-              <SourceBadge source={editedVehicle.make.source} />
+              <SourceBadge source={getFieldSource(editedVehicle.make)} />
             </div>
             <Input
-              value={editedVehicle.make.value}
+              value={getFieldValue(editedVehicle.make, '')}
               onChange={(e) => updateField('make', e.target.value)}
               className="bg-background border-border h-9"
             />
@@ -181,10 +206,10 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <Label className="text-xs text-muted-foreground">Model</Label>
-              <SourceBadge source={editedVehicle.model.source} />
+              <SourceBadge source={getFieldSource(editedVehicle.model)} />
             </div>
             <Input
-              value={editedVehicle.model.value}
+              value={getFieldValue(editedVehicle.model, '')}
               onChange={(e) => updateField('model', e.target.value)}
               className="bg-background border-border h-9"
             />
@@ -194,11 +219,11 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <Label className="text-xs text-muted-foreground">Bouwjaar</Label>
-              <SourceBadge source={editedVehicle.year.source} />
+              <SourceBadge source={getFieldSource(editedVehicle.year)} />
             </div>
             <Input
               type="number"
-              value={editedVehicle.year.value}
+              value={getFieldValue(editedVehicle.year, new Date().getFullYear())}
               onChange={(e) => updateField('year', parseInt(e.target.value) || 0)}
               className="bg-background border-border h-9"
             />
@@ -208,10 +233,10 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <Label className="text-xs text-muted-foreground">Brandstof</Label>
-              <SourceBadge source={editedVehicle.fuelType.source} />
+              <SourceBadge source={getFieldSource(editedVehicle.fuelType)} />
             </div>
             <Select
-              value={editedVehicle.fuelType.value}
+              value={getFieldValue(editedVehicle.fuelType, '')}
               onValueChange={(v) => updateField('fuelType', v)}
             >
               <SelectTrigger className="bg-background border-border h-9">
@@ -232,17 +257,17 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
             <div className="flex items-center justify-between">
               <Label className="text-xs text-muted-foreground">Transmissie</Label>
               <SourceBadge 
-                source={editedVehicle.transmission.source} 
-                note={editedVehicle.transmission.note}
+                source={getFieldSource(editedVehicle.transmission)} 
+                note={editedVehicle.transmission?.note}
               />
             </div>
             <Select
-              value={editedVehicle.transmission.value || undefined}
+              value={getFieldValue(editedVehicle.transmission, '') || undefined}
               onValueChange={(v) => updateField('transmission', v)}
             >
               <SelectTrigger className={cn(
                 "bg-background border-border h-9",
-                !editedVehicle.transmission.value && "border-destructive/50"
+                !getFieldValue(editedVehicle.transmission, '') && "border-destructive/50"
               )}>
                 <SelectValue placeholder="Selecteer..." />
               </SelectTrigger>
@@ -261,17 +286,17 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
             <div className="flex items-center justify-between">
               <Label className="text-xs text-muted-foreground">Carrosserie</Label>
               <SourceBadge 
-                source={editedVehicle.bodyType.source}
-                note={editedVehicle.bodyType.note}
+                source={getFieldSource(editedVehicle.bodyType)}
+                note={editedVehicle.bodyType?.note}
               />
             </div>
             <Select
-              value={editedVehicle.bodyType.value || undefined}
+              value={getFieldValue(editedVehicle.bodyType, '') || undefined}
               onValueChange={(v) => updateField('bodyType', v)}
             >
               <SelectTrigger className={cn(
                 "bg-background border-border h-9",
-                !editedVehicle.bodyType.value && "border-destructive/50"
+                !getFieldValue(editedVehicle.bodyType, '') && "border-destructive/50"
               )}>
                 <SelectValue placeholder="Selecteer..." />
               </SelectTrigger>
@@ -289,10 +314,10 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <Label className="text-xs text-muted-foreground">Kleur</Label>
-              <SourceBadge source={editedVehicle.color.source} />
+              <SourceBadge source={getFieldSource(editedVehicle.color)} />
             </div>
             <Input
-              value={editedVehicle.color.value || ''}
+              value={getFieldValue(editedVehicle.color, null) || ''}
               onChange={(e) => updateField('color', e.target.value || null)}
               className="bg-background border-border h-9"
               placeholder="Onbekend"
@@ -304,21 +329,21 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
             <div className="flex items-center justify-between">
               <Label className="text-xs text-muted-foreground">Vermogen</Label>
               <SourceBadge 
-                source={editedVehicle.power.source}
-                note={editedVehicle.power.note}
+                source={getFieldSource(editedVehicle.power)}
+                note={editedVehicle.power?.note}
               />
             </div>
             <div className="flex gap-1">
               <Input
                 type="number"
                 value={powerUnit === 'hp' 
-                  ? (editedVehicle.power.value?.hp || '') 
-                  : (editedVehicle.power.value?.kw || '')
+                  ? (getFieldValue(editedVehicle.power, null)?.hp || '') 
+                  : (getFieldValue(editedVehicle.power, null)?.kw || '')
                 }
                 onChange={(e) => updatePower(parseInt(e.target.value) || 0, powerUnit)}
                 className={cn(
                   "bg-background border-border h-9 flex-1",
-                  !editedVehicle.power.value && "border-warning/50"
+                  !getFieldValue(editedVehicle.power, null) && "border-warning/50"
                 )}
                 placeholder="Optioneel"
               />
