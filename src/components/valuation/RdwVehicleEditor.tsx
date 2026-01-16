@@ -44,21 +44,18 @@ function SourceBadge({ source, note }: { source: DataSource; note?: string }) {
   const config = {
     rdw: { 
       label: 'RDW', 
-      variant: 'default' as const, 
       icon: CheckCircle,
-      className: 'bg-success/10 text-success border-success/30 hover:bg-success/20',
+      className: 'bg-success/10 text-success border-success/30',
     },
     inferred: { 
-      label: 'Afgeleid', 
-      variant: 'secondary' as const, 
+      label: 'Auto', 
       icon: Zap,
-      className: 'bg-warning/10 text-warning border-warning/30 hover:bg-warning/20',
+      className: 'bg-warning/10 text-warning border-warning/30',
     },
     missing: { 
-      label: 'Ontbreekt', 
-      variant: 'destructive' as const, 
+      label: 'Leeg', 
       icon: AlertCircle,
-      className: 'bg-destructive/10 text-destructive border-destructive/30 hover:bg-destructive/20',
+      className: 'bg-destructive/10 text-destructive border-destructive/30',
     },
   };
 
@@ -67,10 +64,10 @@ function SourceBadge({ source, note }: { source: DataSource; note?: string }) {
   return (
     <Badge 
       variant="outline" 
-      className={cn('text-xs gap-1 font-normal', className)}
+      className={cn('text-[10px] gap-0.5 px-1.5 py-0 h-5 font-normal shrink-0', className)}
       title={note}
     >
-      <Icon className="h-3 w-3" />
+      <Icon className="h-2.5 w-2.5" />
       {label}
     </Badge>
   );
@@ -187,183 +184,183 @@ export function RdwVehicleEditor({ vehicle, onConfirm, onCancel }: RdwVehicleEdi
           </div>
         </div>
 
-        {/* Fields Grid */}
-        <div className="grid grid-cols-2 gap-3">
-          {/* Make */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground">Merk</Label>
-              <SourceBadge source={getFieldSource(editedVehicle.make)} />
-            </div>
-            <Input
-              value={getFieldValue(editedVehicle.make, '')}
-              onChange={(e) => updateField('make', e.target.value)}
-              className="bg-background border-border h-9"
-            />
-          </div>
-
-          {/* Model */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground">Model</Label>
-              <SourceBadge source={getFieldSource(editedVehicle.model)} />
-            </div>
-            <Input
-              value={getFieldValue(editedVehicle.model, '')}
-              onChange={(e) => updateField('model', e.target.value)}
-              className="bg-background border-border h-9"
-            />
-          </div>
-
-          {/* Year */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground">Bouwjaar</Label>
-              <SourceBadge source={getFieldSource(editedVehicle.year)} />
-            </div>
-            <Input
-              type="number"
-              value={getFieldValue(editedVehicle.year, new Date().getFullYear())}
-              onChange={(e) => updateField('year', parseInt(e.target.value) || 0)}
-              className="bg-background border-border h-9"
-            />
-          </div>
-
-          {/* Fuel Type */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground">Brandstof</Label>
-              <SourceBadge source={getFieldSource(editedVehicle.fuelType)} />
-            </div>
-            <Select
-              value={getFieldValue(editedVehicle.fuelType, '')}
-              onValueChange={(v) => updateField('fuelType', v)}
-            >
-              <SelectTrigger className="bg-background border-border h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {fuels?.map((fuel) => (
-                  <SelectItem key={fuel} value={fuel}>
-                    {fuel}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Transmission */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground">Transmissie</Label>
-              <SourceBadge 
-                source={getFieldSource(editedVehicle.transmission)} 
-                note={editedVehicle.transmission?.note}
+        {/* Fields - Stacked Layout */}
+        <div className="space-y-3">
+          {/* Row 1: Merk + Model */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <Label className="text-xs font-medium text-muted-foreground">Merk</Label>
+                <SourceBadge source={getFieldSource(editedVehicle.make)} />
+              </div>
+              <Input
+                value={getFieldValue(editedVehicle.make, '')}
+                onChange={(e) => updateField('make', e.target.value)}
+                className="bg-background border-border h-9"
               />
             </div>
-            <Select
-              value={getFieldValue(editedVehicle.transmission, '') || undefined}
-              onValueChange={(v) => updateField('transmission', v)}
-            >
-              <SelectTrigger className={cn(
-                "bg-background border-border h-9",
-                !getFieldValue(editedVehicle.transmission, '') && "border-destructive/50"
-              )}>
-                <SelectValue placeholder="Selecteer..." />
-              </SelectTrigger>
-              <SelectContent>
-                {transmissions?.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {t}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Body Type */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground">Carrosserie</Label>
-              <SourceBadge 
-                source={getFieldSource(editedVehicle.bodyType)}
-                note={editedVehicle.bodyType?.note}
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <Label className="text-xs font-medium text-muted-foreground">Model</Label>
+                <SourceBadge source={getFieldSource(editedVehicle.model)} />
+              </div>
+              <Input
+                value={getFieldValue(editedVehicle.model, '')}
+                onChange={(e) => updateField('model', e.target.value)}
+                className="bg-background border-border h-9"
               />
             </div>
-            <Select
-              value={getFieldValue(editedVehicle.bodyType, '') || undefined}
-              onValueChange={(v) => updateField('bodyType', v)}
-            >
-              <SelectTrigger className={cn(
-                "bg-background border-border h-9",
-                !getFieldValue(editedVehicle.bodyType, '') && "border-destructive/50"
-              )}>
-                <SelectValue placeholder="Selecteer..." />
-              </SelectTrigger>
-              <SelectContent>
-                {bodyTypes?.map((bt) => (
-                  <SelectItem key={bt} value={bt}>
-                    {bt}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           </div>
 
-          {/* Color */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground">Kleur</Label>
-              <SourceBadge source={getFieldSource(editedVehicle.color)} />
-            </div>
-            <Input
-              value={getFieldValue(editedVehicle.color, null) || ''}
-              onChange={(e) => updateField('color', e.target.value || null)}
-              className="bg-background border-border h-9"
-              placeholder="Onbekend"
-            />
-          </div>
-
-          {/* Power */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground">Vermogen</Label>
-              <SourceBadge 
-                source={getFieldSource(editedVehicle.power)}
-                note={editedVehicle.power?.note}
-              />
-            </div>
-            <div className="flex gap-1">
+          {/* Row 2: Bouwjaar + Brandstof */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <Label className="text-xs font-medium text-muted-foreground">Bouwjaar</Label>
+                <SourceBadge source={getFieldSource(editedVehicle.year)} />
+              </div>
               <Input
                 type="number"
-                value={powerUnit === 'hp' 
-                  ? (getFieldValue(editedVehicle.power, null)?.hp || '') 
-                  : (getFieldValue(editedVehicle.power, null)?.kw || '')
-                }
-                onChange={(e) => updatePower(parseInt(e.target.value) || 0, powerUnit)}
-                className={cn(
-                  "bg-background border-border h-9 flex-1",
-                  !getFieldValue(editedVehicle.power, null) && "border-warning/50"
-                )}
-                placeholder="Optioneel"
+                value={getFieldValue(editedVehicle.year, new Date().getFullYear())}
+                onChange={(e) => updateField('year', parseInt(e.target.value) || 0)}
+                className="bg-background border-border h-9"
               />
-              <div className="flex rounded-md border border-border overflow-hidden">
-                <Toggle
-                  pressed={powerUnit === 'hp'}
-                  onPressedChange={() => setPowerUnit('hp')}
-                  className="rounded-none border-0 px-2 h-9 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
-                  size="sm"
-                >
-                  PK
-                </Toggle>
-                <Toggle
-                  pressed={powerUnit === 'kw'}
-                  onPressedChange={() => setPowerUnit('kw')}
-                  className="rounded-none border-0 px-2 h-9 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
-                  size="sm"
-                >
-                  kW
-                </Toggle>
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <Label className="text-xs font-medium text-muted-foreground">Brandstof</Label>
+                <SourceBadge source={getFieldSource(editedVehicle.fuelType)} />
+              </div>
+              <Select
+                value={getFieldValue(editedVehicle.fuelType, '')}
+                onValueChange={(v) => updateField('fuelType', v)}
+              >
+                <SelectTrigger className="bg-background border-border h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {fuels?.map((fuel) => (
+                    <SelectItem key={fuel} value={fuel}>
+                      {fuel}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Row 3: Transmissie + Carrosserie */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <Label className="text-xs font-medium text-muted-foreground">Transmissie</Label>
+                <SourceBadge 
+                  source={getFieldSource(editedVehicle.transmission)} 
+                  note={editedVehicle.transmission?.note}
+                />
+              </div>
+              <Select
+                value={getFieldValue(editedVehicle.transmission, '') || undefined}
+                onValueChange={(v) => updateField('transmission', v)}
+              >
+                <SelectTrigger className={cn(
+                  "bg-background border-border h-9",
+                  !getFieldValue(editedVehicle.transmission, '') && "border-destructive/50"
+                )}>
+                  <SelectValue placeholder="Selecteer..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {transmissions?.map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {t}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <Label className="text-xs font-medium text-muted-foreground">Carrosserie</Label>
+                <SourceBadge 
+                  source={getFieldSource(editedVehicle.bodyType)}
+                  note={editedVehicle.bodyType?.note}
+                />
+              </div>
+              <Select
+                value={getFieldValue(editedVehicle.bodyType, '') || undefined}
+                onValueChange={(v) => updateField('bodyType', v)}
+              >
+                <SelectTrigger className={cn(
+                  "bg-background border-border h-9",
+                  !getFieldValue(editedVehicle.bodyType, '') && "border-destructive/50"
+                )}>
+                  <SelectValue placeholder="Selecteer..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {bodyTypes?.map((bt) => (
+                    <SelectItem key={bt} value={bt}>
+                      {bt}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Row 4: Kleur + Vermogen */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <Label className="text-xs font-medium text-muted-foreground">Kleur</Label>
+                <SourceBadge source={getFieldSource(editedVehicle.color)} />
+              </div>
+              <Input
+                value={getFieldValue(editedVehicle.color, null) || ''}
+                onChange={(e) => updateField('color', e.target.value || null)}
+                className="bg-background border-border h-9"
+                placeholder="Onbekend"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <Label className="text-xs font-medium text-muted-foreground">Vermogen</Label>
+                <SourceBadge 
+                  source={getFieldSource(editedVehicle.power)}
+                  note={editedVehicle.power?.note}
+                />
+              </div>
+              <div className="flex gap-1.5">
+                <Input
+                  type="number"
+                  value={powerUnit === 'hp' 
+                    ? (getFieldValue(editedVehicle.power, null)?.hp || '') 
+                    : (getFieldValue(editedVehicle.power, null)?.kw || '')
+                  }
+                  onChange={(e) => updatePower(parseInt(e.target.value) || 0, powerUnit)}
+                  className={cn(
+                    "bg-background border-border h-9 flex-1 min-w-0",
+                    !getFieldValue(editedVehicle.power, null) && "border-warning/50"
+                  )}
+                  placeholder="Optioneel"
+                />
+                <div className="flex shrink-0 rounded-md border border-border overflow-hidden">
+                  <Toggle
+                    pressed={powerUnit === 'hp'}
+                    onPressedChange={() => setPowerUnit('hp')}
+                    className="rounded-none border-0 w-9 h-9 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+                    size="sm"
+                  >
+                    PK
+                  </Toggle>
+                  <Toggle
+                    pressed={powerUnit === 'kw'}
+                    onPressedChange={() => setPowerUnit('kw')}
+                    className="rounded-none border-0 w-9 h-9 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+                    size="sm"
+                  >
+                    kW
+                  </Toggle>
+                </div>
               </div>
             </div>
           </div>
