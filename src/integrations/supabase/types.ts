@@ -384,6 +384,45 @@ export type Database = {
         }
         Relationships: []
       }
+      portal_configs: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          frequency_minutes: number
+          id: string
+          last_success_at: string | null
+          name: string
+          portal_id: string
+          priority: number
+          settings: Json
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          frequency_minutes?: number
+          id?: string
+          last_success_at?: string | null
+          name: string
+          portal_id: string
+          priority?: number
+          settings?: Json
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          frequency_minutes?: number
+          id?: string
+          last_success_at?: string | null
+          name?: string
+          portal_id?: string
+          priority?: number
+          settings?: Json
+          updated_at?: string
+        }
+        Relationships: []
+      }
       raw_listings: {
         Row: {
           consecutive_misses: number | null
@@ -600,6 +639,24 @@ export type Database = {
           status?: string
           stop_reason?: string | null
           triggered_by?: string | null
+        }
+        Relationships: []
+      }
+      system_settings: {
+        Row: {
+          key: string
+          updated_at: string
+          value: Json
+        }
+        Insert: {
+          key: string
+          updated_at?: string
+          value?: Json
+        }
+        Update: {
+          key?: string
+          updated_at?: string
+          value?: Json
         }
         Relationships: []
       }
