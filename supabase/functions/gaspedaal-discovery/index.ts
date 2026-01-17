@@ -537,6 +537,26 @@ async function scrapeWithFirecrawl(
   }
 }
 
+// ===== SELECT BEST DETAIL URL (prioriteer dealersite) =====
+function selectBestDetailUrl(
+  gaspedaalUrl: string,
+  outboundLinks: Array<{ source: string; url: string }>
+): { url: string; source: string } {
+  // Priority order: dealersite gets highest priority (most complete data)
+  // Then major portals, Gaspedaal as fallback
+  const priorityOrder = ['dealersite', 'autotrack', 'autoscout24', 'marktplaats', 'anwb'];
+  
+  for (const source of priorityOrder) {
+    const link = outboundLinks.find(l => l.source === source);
+    if (link && link.url) {
+      return { url: link.url, source };
+    }
+  }
+  
+  // Fallback to Gaspedaal URL
+  return { url: gaspedaalUrl, source: 'gaspedaal' };
+}
+
 // ===== INDEX PAGE: Build URL =====
 function buildIndexPageUrl(page: number, make?: string): string {
   const params = new URLSearchParams({
@@ -755,32 +775,80 @@ function extractListingFromHtml(html: string, url: string): IndexPageListing | n
     const outboundSources: string[] = [];
     const outboundLinks: Array<{ source: string; url: string }> = [];
     
-    // Look for portal mentions with URLs
-    const portalLinkPatterns = [
-      /href="(https?:\/\/[^"]*autotrack[^"]*)"/gi,
-      /href="(https?:\/\/[^"]*autoscout24[^"]*)"/gi,
-      /href="(https?:\/\/[^"]*anwb[^"]*)"/gi,
-      /href="(https?:\/\/[^"]*marktplaats[^"]*)"/gi,
+    // Known portal domains to exclude when finding dealersite
+    const knownPortalDomains = [
+      'gaspedaal.nl',
+      'autotrack.nl',
+      'autoscout24.nl',
+      'autoscout24.be',
+      'anwb.nl',
+      'marktplaats.nl',
+      'autowereld.nl',
+      'autoweek.nl',
+      'viabovag.nl',
     ];
     
-    for (const pattern of portalLinkPatterns) {
-      let linkMatch;
-      while ((linkMatch = pattern.exec(cardHtml)) !== null) {
-        const linkUrl = linkMatch[1];
-        let source = 'unknown';
-        if (linkUrl.includes('autotrack')) source = 'autotrack';
-        else if (linkUrl.includes('autoscout24')) source = 'autoscout24';
-        else if (linkUrl.includes('anwb')) source = 'anwb';
-        else if (linkUrl.includes('marktplaats')) source = 'marktplaats';
-        
-        if (!outboundSources.includes(source)) {
-          outboundSources.push(source);
-          outboundLinks.push({ source, url: linkUrl });
+    // Helper to check if URL is a known portal
+    const isKnownPortal = (url: string): boolean => {
+      return knownPortalDomains.some(domain => url.includes(domain));
+    };
+    
+    // Look for ALL external links in the card
+    const allLinkPattern = /href="(https?:\/\/[^"]+)"/gi;
+    let linkMatch;
+    
+    while ((linkMatch = allLinkPattern.exec(cardHtml)) !== null) {
+      const linkUrl = linkMatch[1];
+      
+      // Skip internal gaspedaal links (occasion pages, etc.)
+      if (linkUrl.includes('gaspedaal.nl/occasion') || linkUrl.includes('gaspedaal.nl/zoeken')) {
+        continue;
+      }
+      
+      // Determine source type
+      let source = 'unknown';
+      if (linkUrl.includes('autotrack')) {
+        source = 'autotrack';
+      } else if (linkUrl.includes('autoscout24')) {
+        source = 'autoscout24';
+      } else if (linkUrl.includes('anwb.nl')) {
+        source = 'anwb';
+      } else if (linkUrl.includes('marktplaats')) {
+        source = 'marktplaats';
+      } else if (!isKnownPortal(linkUrl)) {
+        // External link that's NOT a known portal = dealersite!
+        source = 'dealersite';
+      }
+      
+      // Only add if we haven't seen this source yet
+      if (source !== 'unknown' && !outboundSources.includes(source)) {
+        outboundSources.push(source);
+        outboundLinks.push({ source, url: linkUrl });
+      }
+    }
+    
+    // Also look for "dealersite" or "website" button/link patterns
+    const dealersiteLinkPatterns = [
+      /href="([^"]+)"[^>]*>[^<]*(?:dealersite|website|dealer)[^<]*<\/a>/gi,
+      /data-dealer-url="([^"]+)"/gi,
+      /class="[^"]*dealer[^"]*"[^>]*href="([^"]+)"/gi,
+    ];
+    
+    for (const pattern of dealersiteLinkPatterns) {
+      let dsMatch;
+      while ((dsMatch = pattern.exec(cardHtml)) !== null) {
+        const dsUrl = dsMatch[1];
+        // Make sure it's a full URL and not a known portal
+        if (dsUrl.startsWith('http') && !isKnownPortal(dsUrl)) {
+          if (!outboundSources.includes('dealersite')) {
+            outboundSources.push('dealersite');
+            outboundLinks.push({ source: 'dealersite', url: dsUrl });
+          }
         }
       }
     }
     
-    // Also check for portal names without links
+    // Also check for portal names without links (for source tracking)
     const portalMatch = cardHtml.match(/(?:Dealersite|AutoTrack|ANWB|AutoScout24|Marktplaats)/gi);
     if (portalMatch) {
       for (const portal of portalMatch) {
@@ -1315,13 +1383,24 @@ async function runDiscoveryMode(
           console.log(`[INDEX ONLY] Skipping detail page for new listing: ${listing.url}`);
         }
       } else if (isNewListing) {
-        // NEW LISTING: Scrape detail page
+        // NEW LISTING: Scrape detail page - prioritize dealersite if available
         const budgetCheck = checkSafetyLimits(safety, safetyConfig);
         if (!budgetCheck.shouldStop) {
-          console.log(`[DETAIL] Scraping detail page for new listing: ${listing.url}`);
-          detailHtml = await scrapeWithFirecrawl(listing.url, firecrawlKey, safety, false, dryRun);
+          // Select best URL: dealersite > autotrack > autoscout24 > marktplaats > anwb > gaspedaal
+          const bestUrl = selectBestDetailUrl(listing.url, listing.outboundLinks);
+          console.log(`[DETAIL] Selected source: ${bestUrl.source} -> ${bestUrl.url.substring(0, 80)}...`);
+          
+          detailHtml = await scrapeWithFirecrawl(bestUrl.url, firecrawlKey, safety, false, dryRun);
           if (detailHtml) {
             detailData = extractDetailPageData(detailHtml);
+            console.log(`[DETAIL] Extracted ${detailData.optionsRawList?.length || 0} options from ${bestUrl.source}`);
+          } else if (bestUrl.source !== 'gaspedaal') {
+            // Fallback to Gaspedaal if dealersite/portal scrape failed
+            console.log(`[DETAIL] ${bestUrl.source} failed, falling back to Gaspedaal...`);
+            detailHtml = await scrapeWithFirecrawl(listing.url, firecrawlKey, safety, false, dryRun);
+            if (detailHtml) {
+              detailData = extractDetailPageData(detailHtml);
+            }
           }
           await delay(DELAY_BETWEEN_REQUESTS_MS);
         }
