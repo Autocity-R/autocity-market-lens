@@ -542,18 +542,36 @@ function selectBestDetailUrl(
   gaspedaalUrl: string,
   outboundLinks: Array<{ source: string; url: string }>
 ): { url: string; source: string } {
-  // Priority order: dealersite gets highest priority (most complete data)
-  // Then major portals, Gaspedaal as fallback
-  const priorityOrder = ['dealersite', 'autotrack', 'autoscout24', 'marktplaats', 'anwb'];
+  // Primary priority order: dealersite gets highest priority (most complete data)
+  const primaryPriority = ['dealersite', 'autotrack', 'autoscout24', 'marktplaats', 'anwb'];
   
-  for (const source of priorityOrder) {
+  for (const source of primaryPriority) {
     const link = outboundLinks.find(l => l.source === source);
     if (link && link.url) {
       return { url: link.url, source };
     }
   }
   
-  // Fallback to Gaspedaal URL
+  // Secondary priority: additional portals
+  const secondaryPriority = ['autowereld', 'autoweek', 'viabovag'];
+  
+  for (const source of secondaryPriority) {
+    const link = outboundLinks.find(l => l.source === source);
+    if (link && link.url) {
+      return { url: link.url, source };
+    }
+  }
+  
+  // Last resort: use ANY available outbound link before falling back to Gaspedaal
+  if (outboundLinks.length > 0) {
+    const anyLink = outboundLinks.find(l => l.url && l.source !== 'gaspedaal');
+    if (anyLink) {
+      console.log(`[DETAIL] Using any available link: ${anyLink.source}`);
+      return { url: anyLink.url, source: anyLink.source };
+    }
+  }
+  
+  // Ultimate fallback: Gaspedaal URL
   return { url: gaspedaalUrl, source: 'gaspedaal' };
 }
 
@@ -806,7 +824,7 @@ function extractListingFromHtml(html: string, url: string): IndexPageListing | n
       }
       
       // Determine source type
-      let source = 'unknown';
+      let source = 'other';
       if (linkUrl.includes('autotrack')) {
         source = 'autotrack';
       } else if (linkUrl.includes('autoscout24')) {
@@ -815,13 +833,19 @@ function extractListingFromHtml(html: string, url: string): IndexPageListing | n
         source = 'anwb';
       } else if (linkUrl.includes('marktplaats')) {
         source = 'marktplaats';
+      } else if (linkUrl.includes('autowereld')) {
+        source = 'autowereld';
+      } else if (linkUrl.includes('autoweek')) {
+        source = 'autoweek';
+      } else if (linkUrl.includes('viabovag')) {
+        source = 'viabovag';
       } else if (!isKnownPortal(linkUrl)) {
         // External link that's NOT a known portal = dealersite!
         source = 'dealersite';
       }
       
-      // Only add if we haven't seen this source yet
-      if (source !== 'unknown' && !outboundSources.includes(source)) {
+      // Add ALL external links (no 'unknown' skip anymore)
+      if (!outboundSources.includes(source)) {
         outboundSources.push(source);
         outboundLinks.push({ source, url: linkUrl });
       }
