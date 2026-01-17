@@ -160,6 +160,9 @@ export type Database = {
         Row: {
           battery_capacity_kwh: number | null
           body_type: string | null
+          canonical_url: string | null
+          chosen_detail_source: string | null
+          chosen_detail_url: string | null
           color: string | null
           content_hash: string | null
           courantheid_score: number | null
@@ -168,6 +171,10 @@ export type Database = {
           dealer_id: string | null
           dealer_name: string | null
           description_raw: string | null
+          detail_attempts: number | null
+          detail_completeness_score: number | null
+          detail_scraped_at: string | null
+          detail_status: string | null
           doors: number | null
           drivetrain: string | null
           electric_range_km: number | null
@@ -180,6 +187,7 @@ export type Database = {
           image_count: number | null
           image_url_main: string | null
           is_normalized: boolean | null
+          last_detail_error: string | null
           last_seen_at: string
           license_plate: string | null
           license_plate_hash: string | null
@@ -187,6 +195,7 @@ export type Database = {
           mileage: number | null
           mileage_bucket: number | null
           model: string | null
+          needs_detail_rescrape: boolean | null
           normalization_confidence: number | null
           options_parsed: string[] | null
           options_raw: string | null
@@ -207,11 +216,15 @@ export type Database = {
           url: string
           vehicle_fingerprint: string | null
           vin: string | null
+          vin_hash: string | null
           year: number | null
         }
         Insert: {
           battery_capacity_kwh?: number | null
           body_type?: string | null
+          canonical_url?: string | null
+          chosen_detail_source?: string | null
+          chosen_detail_url?: string | null
           color?: string | null
           content_hash?: string | null
           courantheid_score?: number | null
@@ -220,6 +233,10 @@ export type Database = {
           dealer_id?: string | null
           dealer_name?: string | null
           description_raw?: string | null
+          detail_attempts?: number | null
+          detail_completeness_score?: number | null
+          detail_scraped_at?: string | null
+          detail_status?: string | null
           doors?: number | null
           drivetrain?: string | null
           electric_range_km?: number | null
@@ -232,6 +249,7 @@ export type Database = {
           image_count?: number | null
           image_url_main?: string | null
           is_normalized?: boolean | null
+          last_detail_error?: string | null
           last_seen_at?: string
           license_plate?: string | null
           license_plate_hash?: string | null
@@ -239,6 +257,7 @@ export type Database = {
           mileage?: number | null
           mileage_bucket?: number | null
           model?: string | null
+          needs_detail_rescrape?: boolean | null
           normalization_confidence?: number | null
           options_parsed?: string[] | null
           options_raw?: string | null
@@ -259,11 +278,15 @@ export type Database = {
           url: string
           vehicle_fingerprint?: string | null
           vin?: string | null
+          vin_hash?: string | null
           year?: number | null
         }
         Update: {
           battery_capacity_kwh?: number | null
           body_type?: string | null
+          canonical_url?: string | null
+          chosen_detail_source?: string | null
+          chosen_detail_url?: string | null
           color?: string | null
           content_hash?: string | null
           courantheid_score?: number | null
@@ -272,6 +295,10 @@ export type Database = {
           dealer_id?: string | null
           dealer_name?: string | null
           description_raw?: string | null
+          detail_attempts?: number | null
+          detail_completeness_score?: number | null
+          detail_scraped_at?: string | null
+          detail_status?: string | null
           doors?: number | null
           drivetrain?: string | null
           electric_range_km?: number | null
@@ -284,6 +311,7 @@ export type Database = {
           image_count?: number | null
           image_url_main?: string | null
           is_normalized?: boolean | null
+          last_detail_error?: string | null
           last_seen_at?: string
           license_plate?: string | null
           license_plate_hash?: string | null
@@ -291,6 +319,7 @@ export type Database = {
           mileage?: number | null
           mileage_bucket?: number | null
           model?: string | null
+          needs_detail_rescrape?: boolean | null
           normalization_confidence?: number | null
           options_parsed?: string[] | null
           options_raw?: string | null
@@ -311,6 +340,7 @@ export type Database = {
           url?: string
           vehicle_fingerprint?: string | null
           vin?: string | null
+          vin_hash?: string | null
           year?: number | null
         }
         Relationships: [
@@ -452,6 +482,9 @@ export type Database = {
       }
       raw_listings: {
         Row: {
+          canonical_url: string | null
+          chosen_detail_source: string | null
+          chosen_detail_url: string | null
           consecutive_misses: number | null
           content_hash: string
           dealer_city_raw: string | null
@@ -479,8 +512,12 @@ export type Database = {
           scraped_at: string
           source: string
           url: string
+          vin_hash: string | null
         }
         Insert: {
+          canonical_url?: string | null
+          chosen_detail_source?: string | null
+          chosen_detail_url?: string | null
           consecutive_misses?: number | null
           content_hash: string
           dealer_city_raw?: string | null
@@ -508,8 +545,12 @@ export type Database = {
           scraped_at?: string
           source: string
           url: string
+          vin_hash?: string | null
         }
         Update: {
+          canonical_url?: string | null
+          chosen_detail_source?: string | null
+          chosen_detail_url?: string | null
           consecutive_misses?: number | null
           content_hash?: string
           dealer_city_raw?: string | null
@@ -537,6 +578,7 @@ export type Database = {
           scraped_at?: string
           source?: string
           url?: string
+          vin_hash?: string | null
         }
         Relationships: []
       }

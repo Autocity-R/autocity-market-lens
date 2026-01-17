@@ -27,9 +27,19 @@ const DEFAULT_ERROR_RATE_THRESHOLD = 0.10;
 const DEFAULT_PARSE_QUALITY_THRESHOLD = 0.60;
 const SAFETY_CHECK_INTERVAL = 50;
 
+// ===== HEALING THRESHOLDS =====
+const HEALING_MAX_RETRIES = 2;
+const HEALING_MIN_HOURS_BETWEEN_ATTEMPTS = 24;
+const HEALING_DAILY_CAP = 50;
+
+// ===== COMPLETENESS THRESHOLDS =====
+const COMPLETENESS_OK_THRESHOLD = 70;
+const COMPLETENESS_PARTIAL_THRESHOLD = 40;
+
 // ===== TYPES =====
 type JobMode = 'discovery' | 'lifecycle_check';
 type ListingStatus = 'active' | 'gone_suspected' | 'sold_confirmed' | 'returned';
+type DetailStatus = 'pending' | 'ok' | 'partial' | 'failed';
 
 interface IndexPageListing {
   url: string;
@@ -74,6 +84,12 @@ interface DetailPageData {
   imageCount: number;
 }
 
+interface CompletenessResult {
+  score: number;
+  status: DetailStatus;
+  missingFields: string[];
+}
+
 interface SafetyConfig {
   maxCreditsPerDay: number;
   maxCreditsPerRun: number;
@@ -108,6 +124,15 @@ interface JobStats {
   rawListingsSaved: number;
   detailHtmlSaved: number;
   skippedIndexOnly: number;
+  // NEW: Detail stats
+  detailAttempted: number;
+  detailOk: number;
+  detailPartial: number;
+  detailFailed: number;
+  detailHealed: number;
+  avgCompletenessScore: number;
+  completenessScores: number[];
+  missingFieldsCounts: Record<string, number>;
 }
 
 // ===== HELPER: SHA-256 Hash =====
@@ -126,7 +151,73 @@ async function hashLicensePlate(plate: string | null): Promise<string | null> {
   return createHash(normalized);
 }
 
-// ===== HELPER: Vehicle Fingerprint (Fallback matching) =====
+// ===== HELPER: VIN Hash (Privacy) =====
+async function hashVin(vin: string | null): Promise<string | null> {
+  if (!vin) return null;
+  const normalized = vin.toUpperCase().trim();
+  if (normalized.length !== 17) return null; // Invalid VIN
+  return createHash(normalized);
+}
+
+// ===== CANONICAL URL: Normalize Gaspedaal URLs =====
+function canonicalizeGaspedaalUrl(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    // Remove tracking params
+    const trackingParams = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'ref', 'origin', 'fbclid', 'gclid', 'msclkid'];
+    trackingParams.forEach(p => urlObj.searchParams.delete(p));
+    // Remove trailing slash
+    let canonical = urlObj.toString().replace(/\/$/, '');
+    // Normalize www
+    canonical = canonical.replace('://gaspedaal.nl', '://www.gaspedaal.nl');
+    return canonical;
+  } catch {
+    return url;
+  }
+}
+
+// ===== COMPLETENESS SCORING =====
+function calculateCompletenessScore(
+  detailData: DetailPageData | null,
+  listing: IndexPageListing
+): CompletenessResult {
+  if (!detailData) {
+    return { score: 0, status: 'failed', missingFields: ['all_detail_data'] };
+  }
+  
+  const checks = [
+    { name: 'options_raw_text', weight: 25, ok: (detailData.optionsRawText?.length || 0) > 200 },
+    { name: 'options_raw_list', weight: 15, ok: (detailData.optionsRawList?.length || 0) >= 5 },
+    { name: 'description_raw', weight: 20, ok: (detailData.descriptionRaw?.length || 0) > 100 },
+    { name: 'specs_table', weight: 15, ok: Object.keys(detailData.specsTableRaw || {}).length >= 5 },
+    { name: 'license_plate', weight: 15, ok: detailData.licensePlate !== null },
+    { name: 'image_count', weight: 10, ok: detailData.imageCount >= 3 },
+  ];
+  
+  let score = 0;
+  const missingFields: string[] = [];
+  
+  for (const check of checks) {
+    if (check.ok) {
+      score += check.weight;
+    } else {
+      missingFields.push(check.name);
+    }
+  }
+  
+  let status: DetailStatus;
+  if (score >= COMPLETENESS_OK_THRESHOLD) {
+    status = 'ok';
+  } else if (score >= COMPLETENESS_PARTIAL_THRESHOLD) {
+    status = 'partial';
+  } else {
+    status = 'failed';
+  }
+  
+  return { score, status, missingFields };
+}
+
+// ===== HELPER: Vehicle Fingerprint (for non-dedup purposes only - logging) =====
 function generateVehicleFingerprint(listing: {
   make?: string | null;
   model?: string | null;
@@ -219,6 +310,14 @@ function daysSince(dateStr: string): number {
   const date = new Date(dateStr);
   const now = new Date();
   return Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+// ===== HELPER: Hours difference =====
+function hoursSince(dateStr: string | null): number {
+  if (!dateStr) return Infinity;
+  const date = new Date(dateStr);
+  const now = new Date();
+  return Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60));
 }
 
 // ===== SAFETY: Check if we should stop =====
@@ -341,10 +440,13 @@ async function saveRawListing(
   detailHtml: string | null,
   contentHash: string,
   stats: JobStats,
-  safety: SafetyState
+  safety: SafetyState,
+  chosenDetailSource: string | null,
+  chosenDetailUrl: string | null
 ): Promise<string | null> {
   try {
     const now = new Date().toISOString();
+    const canonicalUrl = canonicalizeGaspedaalUrl(listing.url);
     
     // Prepare raw_specs with ALL extracted data
     const rawSpecs: Record<string, any> = {
@@ -355,9 +457,9 @@ async function saveRawListing(
       doors: listing.doors,
       power_pk: listing.powerPk,
       outbound_sources: listing.outboundSources,
-      // NEW: specs_table from detail page
+      // specs_table from detail page
       specs_table: detailData?.specsTableRaw || {},
-      // NEW: EV/Motor data
+      // EV/Motor data
       engine_cc: detailData?.engineCc,
       battery_capacity_kwh: detailData?.batteryCapacityKwh,
       electric_range_km: detailData?.electricRangeKm,
@@ -365,17 +467,32 @@ async function saveRawListing(
       vin: detailData?.vin,
     };
     
-    // Check if raw listing already exists by URL
+    // Hash VIN if present
+    const vinHash = detailData?.vin ? await hashVin(detailData.vin) : null;
+    
+    // Check if raw listing already exists by canonical URL
     const { data: existing } = await supabase
       .from('raw_listings')
       .select('id, content_hash, consecutive_misses')
-      .eq('url', listing.url)
+      .eq('canonical_url', canonicalUrl)
       .maybeSingle();
 
-    if (existing) {
+    // Fallback: check by original URL if canonical not found
+    let existingRecord = existing;
+    if (!existingRecord) {
+      const { data: existingByUrl } = await supabase
+        .from('raw_listings')
+        .select('id, content_hash, consecutive_misses')
+        .eq('url', listing.url)
+        .maybeSingle();
+      existingRecord = existingByUrl;
+    }
+
+    if (existingRecord) {
       // Update existing raw listing
       const updateData: Record<string, any> = {
         content_hash: contentHash,
+        canonical_url: canonicalUrl,
         last_seen_at: now,
         scraped_at: now,
         raw_title: listing.title,
@@ -387,6 +504,9 @@ async function saveRawListing(
         dealer_city_raw: listing.dealerCity,
         consecutive_misses: 0,
         outbound_links: listing.outboundLinks,
+        chosen_detail_source: chosenDetailSource,
+        chosen_detail_url: chosenDetailUrl,
+        vin_hash: vinHash,
       };
       
       // Add detail data if available
@@ -412,13 +532,14 @@ async function saveRawListing(
       await supabase
         .from('raw_listings')
         .update(updateData)
-        .eq('id', existing.id);
+        .eq('id', existingRecord.id);
       
-      return existing.id;
+      return existingRecord.id;
     } else {
       // Insert new raw listing
       const insertData: Record<string, any> = {
         url: listing.url,
+        canonical_url: canonicalUrl,
         source: 'gaspedaal',
         content_hash: contentHash,
         raw_title: listing.title,
@@ -432,6 +553,9 @@ async function saveRawListing(
         last_seen_at: now,
         scraped_at: now,
         outbound_links: listing.outboundLinks,
+        chosen_detail_source: chosenDetailSource,
+        chosen_detail_url: chosenDetailUrl,
+        vin_hash: vinHash,
       };
       
       // Add detail data if available
@@ -1291,6 +1415,203 @@ async function logVehicleEvent(
   }
 }
 
+// ===== LOOKUP EXISTING LISTING: HARD IDENTITY ONLY =====
+async function lookupExistingListing(
+  supabase: any,
+  listing: IndexPageListing,
+  detailData: DetailPageData | null
+): Promise<{ existingListing: any | null; matchType: string | null }> {
+  const canonicalUrl = canonicalizeGaspedaalUrl(listing.url);
+  
+  // 1. Primary lookup: canonical URL
+  const { data: byCanonicalUrl } = await supabase
+    .from('listings')
+    .select('id, status, price, mileage, content_hash, first_seen_at, gone_detected_at, license_plate_hash, vehicle_fingerprint, raw_listing_id, detail_status, detail_attempts, detail_scraped_at, canonical_url, vin_hash')
+    .eq('canonical_url', canonicalUrl)
+    .maybeSingle();
+  
+  if (byCanonicalUrl) {
+    return { existingListing: byCanonicalUrl, matchType: 'canonical_url' };
+  }
+  
+  // 2. Fallback: original URL (for backwards compatibility)
+  const { data: byUrl } = await supabase
+    .from('listings')
+    .select('id, status, price, mileage, content_hash, first_seen_at, gone_detected_at, license_plate_hash, vehicle_fingerprint, raw_listing_id, detail_status, detail_attempts, detail_scraped_at, canonical_url, vin_hash')
+    .eq('url', listing.url)
+    .maybeSingle();
+  
+  if (byUrl) {
+    return { existingListing: byUrl, matchType: 'url' };
+  }
+  
+  // 3. Secondary lookup: license_plate_hash (only if detail data has plate)
+  if (detailData?.licensePlate) {
+    const plateHash = await hashLicensePlate(detailData.licensePlate);
+    if (plateHash) {
+      const { data: byPlate } = await supabase
+        .from('listings')
+        .select('id, status, price, mileage, content_hash, first_seen_at, gone_detected_at, license_plate_hash, vehicle_fingerprint, raw_listing_id, detail_status, detail_attempts, detail_scraped_at, canonical_url, url, vin_hash')
+        .eq('license_plate_hash', plateHash)
+        .maybeSingle();
+      
+      if (byPlate) {
+        console.log(`[DEDUP] Found existing listing by license_plate_hash: ${byPlate.id} (old URL: ${byPlate.url?.substring(0, 50)}...)`);
+        return { existingListing: byPlate, matchType: 'license_plate_hash' };
+      }
+    }
+  }
+  
+  // 4. Tertiary lookup: vin_hash (only if detail data has VIN)
+  if (detailData?.vin) {
+    const vinHash = await hashVin(detailData.vin);
+    if (vinHash) {
+      const { data: byVin } = await supabase
+        .from('listings')
+        .select('id, status, price, mileage, content_hash, first_seen_at, gone_detected_at, license_plate_hash, vehicle_fingerprint, raw_listing_id, detail_status, detail_attempts, detail_scraped_at, canonical_url, url, vin_hash')
+        .eq('vin_hash', vinHash)
+        .maybeSingle();
+      
+      if (byVin) {
+        console.log(`[DEDUP] Found existing listing by vin_hash: ${byVin.id}`);
+        return { existingListing: byVin, matchType: 'vin_hash' };
+      }
+    }
+  }
+  
+  // NO SOFT MATCHING - if no hard ID match, it's a new listing
+  return { existingListing: null, matchType: null };
+}
+
+// ===== HEALING QUEUE: Process incomplete listings =====
+async function processHealingQueue(
+  supabase: any,
+  firecrawlKey: string,
+  safety: SafetyState,
+  safetyConfig: SafetyConfig,
+  stats: JobStats,
+  dryRun: boolean
+): Promise<void> {
+  console.log('[HEALING] Starting healing queue processing...');
+  
+  const now = new Date();
+  const minTimeSinceLastAttempt = new Date(now.getTime() - HEALING_MIN_HOURS_BETWEEN_ATTEMPTS * 60 * 60 * 1000).toISOString();
+  
+  // Find incomplete listings that need re-scraping
+  const { data: healingCandidates, error } = await supabase
+    .from('listings')
+    .select('id, url, canonical_url, outbound_links, detail_attempts, detail_scraped_at, detail_status, chosen_detail_source')
+    .eq('needs_detail_rescrape', true)
+    .lt('detail_attempts', HEALING_MAX_RETRIES)
+    .or(`detail_scraped_at.is.null,detail_scraped_at.lt.${minTimeSinceLastAttempt}`)
+    .limit(HEALING_DAILY_CAP);
+  
+  if (error) {
+    console.error('[HEALING] Error fetching candidates:', error);
+    return;
+  }
+  
+  console.log(`[HEALING] Found ${healingCandidates?.length || 0} candidates for healing`);
+  
+  for (const candidate of (healingCandidates || [])) {
+    // Check safety limits
+    const safetyCheck = checkSafetyLimits(safety, safetyConfig);
+    if (safetyCheck.shouldStop) {
+      console.log(`[HEALING] Stopping: ${safetyCheck.reason}`);
+      break;
+    }
+    
+    console.log(`[HEALING] Processing listing ${candidate.id} (attempt ${candidate.detail_attempts + 1}/${HEALING_MAX_RETRIES})`);
+    
+    // Select best URL for detail scrape
+    const outboundLinks = candidate.outbound_links || [];
+    const bestUrl = selectBestDetailUrl(candidate.url, outboundLinks);
+    
+    // Scrape detail page
+    const detailHtml = await scrapeWithFirecrawl(bestUrl.url, firecrawlKey, safety, false, dryRun);
+    stats.detailAttempted++;
+    
+    if (!detailHtml) {
+      // Failed to scrape - update attempts and error
+      await supabase
+        .from('listings')
+        .update({
+          detail_attempts: candidate.detail_attempts + 1,
+          last_detail_error: `Failed to scrape ${bestUrl.source}: No HTML returned`,
+          detail_scraped_at: new Date().toISOString(),
+        })
+        .eq('id', candidate.id);
+      stats.detailFailed++;
+      await delay(DELAY_BETWEEN_REQUESTS_MS);
+      continue;
+    }
+    
+    // Extract detail data
+    const detailData = extractDetailPageData(detailHtml);
+    const completeness = calculateCompletenessScore(detailData, {} as IndexPageListing);
+    
+    // Update listing with new detail data
+    const updateData: Record<string, any> = {
+      detail_attempts: candidate.detail_attempts + 1,
+      detail_scraped_at: new Date().toISOString(),
+      detail_status: completeness.status,
+      detail_completeness_score: completeness.score,
+      chosen_detail_source: bestUrl.source,
+      chosen_detail_url: bestUrl.url,
+      needs_detail_rescrape: completeness.status !== 'ok',
+      last_detail_error: completeness.status !== 'ok' 
+        ? `Missing fields: ${completeness.missingFields.join(', ')}` 
+        : null,
+    };
+    
+    // Add extracted data
+    if (detailData) {
+      updateData.options_raw = detailData.optionsRawText;
+      updateData.description_raw = detailData.descriptionRaw;
+      updateData.engine_cc = detailData.engineCc;
+      updateData.battery_capacity_kwh = detailData.batteryCapacityKwh;
+      updateData.electric_range_km = detailData.electricRangeKm;
+      updateData.drivetrain = detailData.drivetrain;
+      updateData.vin = detailData.vin;
+      updateData.image_url_main = detailData.imageUrlMain;
+      updateData.image_count = detailData.imageCount;
+      
+      // Update license plate hash if found
+      if (detailData.licensePlate) {
+        updateData.license_plate_hash = await hashLicensePlate(detailData.licensePlate);
+      }
+      
+      // Update VIN hash if found
+      if (detailData.vin) {
+        updateData.vin_hash = await hashVin(detailData.vin);
+      }
+    }
+    
+    await supabase
+      .from('listings')
+      .update(updateData)
+      .eq('id', candidate.id);
+    
+    // Update stats
+    stats.detailHealed++;
+    stats.completenessScores.push(completeness.score);
+    if (completeness.status === 'ok') stats.detailOk++;
+    else if (completeness.status === 'partial') stats.detailPartial++;
+    else stats.detailFailed++;
+    
+    // Track missing fields
+    for (const field of completeness.missingFields) {
+      stats.missingFieldsCounts[field] = (stats.missingFieldsCounts[field] || 0) + 1;
+    }
+    
+    console.log(`[HEALING] Listing ${candidate.id}: ${completeness.status} (score: ${completeness.score})`);
+    
+    await delay(DELAY_BETWEEN_REQUESTS_MS);
+  }
+  
+  console.log(`[HEALING] Completed. Healed: ${stats.detailHealed}, OK: ${stats.detailOk}, Partial: ${stats.detailPartial}, Failed: ${stats.detailFailed}`);
+}
+
 // ===== DISCOVERY MODE: Main logic =====
 async function runDiscoveryMode(
   supabase: any,
@@ -1371,16 +1692,10 @@ async function runDiscoveryMode(
         continue;
       }
 
-      // Generate content hash
+      // Generate content hash and canonical URL
       const contentHash = await createContentHash(listing);
+      const canonicalUrl = canonicalizeGaspedaalUrl(listing.url);
       
-      // Check if listing exists in database
-      const { data: existingListing } = await supabase
-        .from('listings')
-        .select('id, status, price, mileage, content_hash, first_seen_at, gone_detected_at, license_plate_hash, vehicle_fingerprint, raw_listing_id')
-        .eq('url', listing.url)
-        .maybeSingle();
-
       const { make, model } = extractMakeModel(listing.title);
       const fingerprint = generateVehicleFingerprint({
         make,
@@ -1394,11 +1709,16 @@ async function runDiscoveryMode(
       });
 
       const now = new Date().toISOString();
-      const isNewListing = !existingListing;
       
       // Determine if we need detail page
       let detailData: DetailPageData | null = null;
       let detailHtml: string | null = null;
+      let chosenDetailSource: string | null = null;
+      let chosenDetailUrl: string | null = null;
+      
+      // First, do a preliminary lookup without detail data
+      const { existingListing: preliminaryLookup, matchType: preliminaryMatchType } = await lookupExistingListing(supabase, listing, null);
+      const isNewListing = !preliminaryLookup;
       
       if (indexOnly) {
         // INDEX ONLY MODE: Skip detail page scraping
@@ -1412,8 +1732,11 @@ async function runDiscoveryMode(
         if (!budgetCheck.shouldStop) {
           // Select best URL: dealersite > autotrack > autoscout24 > marktplaats > anwb > gaspedaal
           const bestUrl = selectBestDetailUrl(listing.url, listing.outboundLinks);
+          chosenDetailSource = bestUrl.source;
+          chosenDetailUrl = bestUrl.url;
           console.log(`[DETAIL] Selected source: ${bestUrl.source} -> ${bestUrl.url.substring(0, 80)}...`);
           
+          stats.detailAttempted++;
           detailHtml = await scrapeWithFirecrawl(bestUrl.url, firecrawlKey, safety, false, dryRun);
           if (detailHtml) {
             detailData = extractDetailPageData(detailHtml);
@@ -1421,6 +1744,8 @@ async function runDiscoveryMode(
           } else if (bestUrl.source !== 'gaspedaal') {
             // Fallback to Gaspedaal if dealersite/portal scrape failed
             console.log(`[DETAIL] ${bestUrl.source} failed, falling back to Gaspedaal...`);
+            chosenDetailSource = 'gaspedaal';
+            chosenDetailUrl = listing.url;
             detailHtml = await scrapeWithFirecrawl(listing.url, firecrawlKey, safety, false, dryRun);
             if (detailHtml) {
               detailData = extractDetailPageData(detailHtml);
@@ -1430,6 +1755,9 @@ async function runDiscoveryMode(
         }
       }
 
+      // Now do final lookup with detail data (might find by plate/VIN)
+      const { existingListing, matchType } = await lookupExistingListing(supabase, listing, detailData);
+
       // ===== SAVE TO raw_listings (ALWAYS - with or without detail) =====
       const rawListingId = await saveRawListing(
         supabase, 
@@ -1438,7 +1766,9 @@ async function runDiscoveryMode(
         detailHtml, 
         contentHash, 
         stats,
-        safety
+        safety,
+        chosenDetailSource,
+        chosenDetailUrl
       );
       
       if (!rawListingId) {
@@ -1449,126 +1779,130 @@ async function runDiscoveryMode(
       
       console.log(`[RAW] Saved raw listing ${rawListingId} for ${listing.url}`);
 
+      // Calculate completeness score if detail data was scraped
+      let completeness: CompletenessResult = { score: 0, status: 'pending', missingFields: [] };
+      if (detailData) {
+        completeness = calculateCompletenessScore(detailData, listing);
+        stats.completenessScores.push(completeness.score);
+        
+        // Track missing fields
+        for (const field of completeness.missingFields) {
+          stats.missingFieldsCounts[field] = (stats.missingFieldsCounts[field] || 0) + 1;
+        }
+        
+        // Update detail stats
+        if (completeness.status === 'ok') stats.detailOk++;
+        else if (completeness.status === 'partial') stats.detailPartial++;
+        else if (completeness.status === 'failed') stats.detailFailed++;
+      }
+
       if (!existingListing) {
-        // NEW LISTING - check if it's a return (false sale)
-        const { data: matchByFingerprint } = await supabase
-          .from('listings')
-          .select('id, status, gone_detected_at, license_plate_hash')
-          .eq('vehicle_fingerprint', fingerprint)
-          .eq('status', 'gone_suspected')
-          .maybeSingle();
+        // TRULY NEW LISTING - no hard ID match found
+        const licensePlateHash = detailData?.licensePlate 
+          ? await hashLicensePlate(detailData.licensePlate) 
+          : null;
+        const vinHash = detailData?.vin
+          ? await hashVin(detailData.vin)
+          : null;
 
-        let isReturn = false;
-        let returnedListingId: string | null = null;
+        // Calculate buckets
+        const priceBucket = listing.price ? Math.floor(listing.price / 5000) * 5000 : null;
+        const mileageBucket = listing.mileage ? Math.floor(listing.mileage / 5000) * 5000 : null;
 
-        if (matchByFingerprint) {
-          const daysSinceGone = daysSince(matchByFingerprint.gone_detected_at);
-          if (daysSinceGone < SOLD_CONFIRMED_DAYS) {
-            isReturn = true;
-            returnedListingId = matchByFingerprint.id;
-          }
+        // Insert new listing with ALL data
+        const insertData: Record<string, any> = {
+          url: listing.url,
+          canonical_url: canonicalUrl,
+          source: 'gaspedaal',
+          title: listing.title,
+          make,
+          model,
+          year: listing.year,
+          mileage: listing.mileage,
+          price: listing.price,
+          fuel_type: listing.fuelType,
+          transmission: listing.transmission,
+          body_type: listing.bodyType,
+          color: listing.color,
+          doors: listing.doors,
+          power_pk: listing.powerPk,
+          dealer_name: listing.dealerName,
+          dealer_city: listing.dealerCity,
+          status: 'active',
+          first_seen_at: now,
+          last_seen_at: now,
+          content_hash: contentHash,
+          vehicle_fingerprint: fingerprint,
+          license_plate_hash: licensePlateHash,
+          vin_hash: vinHash,
+          price_bucket: priceBucket,
+          mileage_bucket: mileageBucket,
+          outbound_sources: listing.outboundSources,
+          outbound_links: listing.outboundLinks,
+          raw_listing_id: rawListingId,
+          // Detail quality tracking
+          detail_status: detailData ? completeness.status : 'pending',
+          detail_completeness_score: completeness.score,
+          detail_attempts: detailData ? 1 : 0,
+          detail_scraped_at: detailData ? now : null,
+          needs_detail_rescrape: detailData ? (completeness.status !== 'ok') : true,
+          last_detail_error: completeness.status !== 'ok' && completeness.missingFields.length > 0
+            ? `Missing: ${completeness.missingFields.join(', ')}`
+            : null,
+          chosen_detail_source: chosenDetailSource,
+          chosen_detail_url: chosenDetailUrl,
+        };
+        
+        // Add detail data if available
+        if (detailData) {
+          insertData.options_raw = detailData.optionsRawText;
+          insertData.description_raw = detailData.descriptionRaw;
+          insertData.engine_cc = detailData.engineCc;
+          insertData.battery_capacity_kwh = detailData.batteryCapacityKwh;
+          insertData.electric_range_km = detailData.electricRangeKm;
+          insertData.drivetrain = detailData.drivetrain;
+          insertData.vin = detailData.vin;
+          insertData.image_url_main = detailData.imageUrlMain;
+          insertData.image_count = detailData.imageCount;
         }
 
-        if (isReturn && returnedListingId) {
-          // RETURNED (false sale) - update existing listing
-          await supabase
-            .from('listings')
-            .update({
-              status: 'returned',
-              url: listing.url,
-              price: listing.price,
-              mileage: listing.mileage,
-              last_seen_at: now,
-              content_hash: contentHash,
-              raw_listing_id: rawListingId,
-            })
-            .eq('id', returnedListingId);
+        const { data: newListing, error: insertError } = await supabase
+          .from('listings')
+          .insert(insertData)
+          .select('id')
+          .single();
 
-          await logVehicleEvent(supabase, returnedListingId, 'returned', {
-            price: listing.price,
-            isRealSale: false,
-            reason: { matched_by: 'fingerprint', new_url: listing.url },
-          });
-
-          stats.listingsReturned++;
-          safety.successfulParses++;
+        if (insertError) {
+          console.error('[ERROR] Inserting listing:', insertError);
+          stats.errorsCount++;
+          safety.failedParses++;
         } else {
-          // Truly new listing
-          const licensePlateHash = detailData?.licensePlate 
-            ? await hashLicensePlate(detailData.licensePlate) 
-            : null;
+          stats.listingsNew++;
+          safety.successfulParses++;
 
-          // Calculate buckets
-          const priceBucket = listing.price ? Math.floor(listing.price / 5000) * 5000 : null;
-          const mileageBucket = listing.mileage ? Math.floor(listing.mileage / 5000) * 5000 : null;
-
-          // Insert new listing with ALL data
-          const insertData: Record<string, any> = {
-            url: listing.url,
-            source: 'gaspedaal',
-            title: listing.title,
-            make,
-            model,
-            year: listing.year,
-            mileage: listing.mileage,
+          // Log creation event
+          await logVehicleEvent(supabase, newListing.id, 'created', {
             price: listing.price,
-            fuel_type: listing.fuelType,
-            transmission: listing.transmission,
-            body_type: listing.bodyType,
-            color: listing.color,
-            doors: listing.doors,
-            power_pk: listing.powerPk,
-            dealer_name: listing.dealerName,
-            dealer_city: listing.dealerCity,
-            status: 'active',
-            first_seen_at: now,
-            last_seen_at: now,
-            content_hash: contentHash,
-            vehicle_fingerprint: fingerprint,
-            license_plate_hash: licensePlateHash,
-            price_bucket: priceBucket,
-            mileage_bucket: mileageBucket,
-            outbound_sources: listing.outboundSources,
-            outbound_links: listing.outboundLinks,
-            raw_listing_id: rawListingId,
-          };
-          
-          // Add detail data if available
-          if (detailData) {
-            insertData.options_raw = detailData.optionsRawText;
-            insertData.description_raw = detailData.descriptionRaw;
-            insertData.engine_cc = detailData.engineCc;
-            insertData.battery_capacity_kwh = detailData.batteryCapacityKwh;
-            insertData.electric_range_km = detailData.electricRangeKm;
-            insertData.drivetrain = detailData.drivetrain;
-            insertData.vin = detailData.vin;
-            insertData.image_url_main = detailData.imageUrlMain;
-            insertData.image_count = detailData.imageCount;
-          }
-
-          const { data: newListing, error: insertError } = await supabase
-            .from('listings')
-            .insert(insertData)
-            .select('id')
-            .single();
-
-          if (insertError) {
-            console.error('[ERROR] Inserting listing:', insertError);
-            stats.errorsCount++;
-            safety.failedParses++;
-          } else {
-            stats.listingsNew++;
-            safety.successfulParses++;
-
-            // Log creation event
-            await logVehicleEvent(supabase, newListing.id, 'created', {
-              price: listing.price,
-              listing: { make, model, year: listing.year, mileage: listing.mileage, fuel_type: listing.fuelType },
-            });
-          }
+            listing: { make, model, year: listing.year, mileage: listing.mileage, fuel_type: listing.fuelType },
+          });
         }
       } else {
-        // EXISTING LISTING - check for updates
+        // EXISTING LISTING - found by hard ID
+        
+        // Log URL change if matched by plate/VIN with different URL
+        if (matchType === 'license_plate_hash' || matchType === 'vin_hash') {
+          if (existingListing.canonical_url !== canonicalUrl && existingListing.url !== listing.url) {
+            await logVehicleEvent(supabase, existingListing.id, 'url_changed', {
+              price: listing.price,
+              reason: { 
+                old_url: existingListing.url, 
+                new_url: listing.url,
+                matched_by: matchType 
+              },
+            });
+            console.log(`[DEDUP] URL changed for listing ${existingListing.id}: matched by ${matchType}`);
+          }
+        }
         
         // Update raw_listing_id link if not set
         if (!existingListing.raw_listing_id) {
@@ -1588,6 +1922,8 @@ async function runDiscoveryMode(
               .from('listings')
               .update({
                 status: 'returned',
+                url: listing.url,
+                canonical_url: canonicalUrl,
                 price: listing.price,
                 mileage: listing.mileage,
                 last_seen_at: now,
@@ -1599,7 +1935,7 @@ async function runDiscoveryMode(
             await logVehicleEvent(supabase, existingListing.id, 'returned', {
               price: listing.price,
               isRealSale: false,
-              reason: { days_gone: daysSinceGone },
+              reason: { days_gone: daysSinceGone, matched_by: matchType },
             });
 
             stats.listingsReturned++;
@@ -1621,6 +1957,8 @@ async function runDiscoveryMode(
           await supabase
             .from('listings')
             .update({
+              url: listing.url,
+              canonical_url: canonicalUrl,
               price: listing.price,
               previous_price: existingListing.price,
               last_seen_at: now,
@@ -1646,10 +1984,14 @@ async function runDiscoveryMode(
 
           stats.listingsUpdated++;
         } else {
-          // Just update last_seen_at
+          // Just update last_seen_at and ensure canonical URL is set
           await supabase
             .from('listings')
-            .update({ last_seen_at: now, status: 'active' })
+            .update({ 
+              last_seen_at: now, 
+              status: 'active',
+              canonical_url: canonicalUrl,
+            })
             .eq('id', existingListing.id);
         }
 
@@ -1658,6 +2000,14 @@ async function runDiscoveryMode(
     }
 
     await delay(DELAY_BETWEEN_REQUESTS_MS);
+  }
+  
+  // Process healing queue if not in index-only mode
+  if (!indexOnly && !dryRun) {
+    const safetyCheck = checkSafetyLimits(safety, safetyConfig);
+    if (!safetyCheck.shouldStop) {
+      await processHealingQueue(supabase, firecrawlKey, safety, safetyConfig, stats, dryRun);
+    }
   }
 }
 
@@ -1772,6 +2122,15 @@ serve(async (req) => {
     rawListingsSaved: 0,
     detailHtmlSaved: 0,
     skippedIndexOnly: 0,
+    // Detail stats
+    detailAttempted: 0,
+    detailOk: 0,
+    detailPartial: 0,
+    detailFailed: 0,
+    detailHealed: 0,
+    avgCompletenessScore: 0,
+    completenessScores: [],
+    missingFieldsCounts: {},
   };
 
   const safety: SafetyState = {
@@ -1875,7 +2234,7 @@ serve(async (req) => {
       );
     }
 
-    // Calculate duration
+    // Calculate duration and averages
     const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
     const parseSuccessRate = safety.totalProcessed > 0 
       ? safety.successfulParses / safety.totalProcessed 
@@ -1883,6 +2242,13 @@ serve(async (req) => {
     const errorRate = safety.totalProcessed > 0 
       ? safety.errors / safety.totalProcessed 
       : 0;
+    
+    // Calculate average completeness score
+    if (stats.completenessScores.length > 0) {
+      stats.avgCompletenessScore = Math.round(
+        stats.completenessScores.reduce((a, b) => a + b, 0) / stats.completenessScores.length
+      );
+    }
 
     // Determine stop reason
     let stopReason = safety.stopReason;
@@ -1923,6 +2289,12 @@ serve(async (req) => {
       );
     }
 
+    // Build top missing fields
+    const topMissingFields = Object.entries(stats.missingFieldsCounts)
+      .map(([field, count]) => ({ field, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
     const result = {
       success: true,
       jobId,
@@ -1940,6 +2312,16 @@ serve(async (req) => {
         rawListingsSaved: stats.rawListingsSaved,
         detailHtmlSaved: stats.detailHtmlSaved,
         skippedIndexOnly: stats.skippedIndexOnly,
+        // Detail stats
+        detailStats: {
+          attempted: stats.detailAttempted,
+          ok: stats.detailOk,
+          partial: stats.detailPartial,
+          failed: stats.detailFailed,
+          healed: stats.detailHealed,
+          avgCompletenessScore: stats.avgCompletenessScore,
+          topMissingFields,
+        },
       },
       stopReason,
     };
