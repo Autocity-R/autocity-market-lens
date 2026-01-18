@@ -720,21 +720,50 @@ function buildIndexPageUrl(page: number, make?: string): string {
 function parseIndexPageListings(html: string): IndexPageListing[] {
   const listings: IndexPageListing[] = [];
   
-  // Try to find all listing URLs first
-  const urlPattern = /href="(\/occasion\/[^"]+)"/gi;
-  const foundUrls = new Set<string>();
+  // NEW APPROACH: Find listing cards by the isOccTitle class (title element)
+  // Each listing has a <h2 class="isOccTitle ...">Title</h2>
+  // We split the HTML into sections around each title
+  
+  const titlePattern = /<h2\s+class="isOccTitle[^"]*"[^>]*>([^<]+)<\/h2>/gi;
+  const titleMatches: Array<{ title: string; index: number }> = [];
   let match;
   
-  while ((match = urlPattern.exec(html)) !== null) {
-    const url = `https://www.gaspedaal.nl${match[1]}`;
-    foundUrls.add(url);
+  while ((match = titlePattern.exec(html)) !== null) {
+    titleMatches.push({
+      title: match[1].trim(),
+      index: match.index,
+    });
   }
-
-  console.log(`[PARSE] Found ${foundUrls.size} unique listing URLs on index page`);
-
-  // For each URL, try to extract surrounding card data
-  for (const url of foundUrls) {
-    const listing = extractListingFromHtml(html, url);
+  
+  console.log(`[PARSE] Found ${titleMatches.length} listing titles (isOccTitle) on index page`);
+  
+  if (titleMatches.length === 0) {
+    // Fallback: try to find titles in any h2 element
+    const h2Pattern = /<h2[^>]*>([^<]{10,100})<\/h2>/gi;
+    while ((match = h2Pattern.exec(html)) !== null) {
+      // Filter out obvious non-listings (menu items, etc.)
+      const text = match[1].trim();
+      if (text.length > 15 && !text.toLowerCase().includes('aanbod') && !text.toLowerCase().includes('zoeken')) {
+        titleMatches.push({
+          title: text,
+          index: match.index,
+        });
+      }
+    }
+    console.log(`[PARSE] Fallback: found ${titleMatches.length} potential listing titles`);
+  }
+  
+  // For each title found, extract the card data from surrounding HTML
+  for (let i = 0; i < titleMatches.length; i++) {
+    const { title, index } = titleMatches[i];
+    
+    // Get HTML window: from 1500 chars before title to next title (or 3000 chars)
+    const start = Math.max(0, index - 1500);
+    const nextIndex = titleMatches[i + 1]?.index ?? html.length;
+    const end = Math.min(nextIndex, index + 3000);
+    const cardHtml = html.substring(start, end);
+    
+    const listing = extractListingFromCardHtml(cardHtml, title, i);
     if (listing) {
       listings.push(listing);
     }
@@ -742,6 +771,273 @@ function parseIndexPageListings(html: string): IndexPageListing[] {
 
   console.log(`[PARSE] Successfully parsed ${listings.length} listings from index page`);
   return listings;
+}
+
+// ===== INDEX PAGE: Extract listing from card HTML =====
+function extractListingFromCardHtml(cardHtml: string, title: string, listingIndex: number): IndexPageListing | null {
+  try {
+    // Generate a unique URL for this listing based on the title (since /occasion/ URLs are not in HTML)
+    // Format: normalize title to URL-friendly slug
+    const slug = title
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .substring(0, 80);
+    const url = `https://www.gaspedaal.nl/occasion/${slug}-${listingIndex}`;
+    
+    // Extract price from data-testid="price" element or € symbol
+    let rawPrice: string | null = null;
+    const pricePatterns = [
+      /data-testid="price"[^>]*>([^<]+)</i,
+      /class="[^"]*price[^"]*"[^>]*>([^<]+)</i,
+      /€\s*([\d.,]+)/,
+    ];
+    for (const pattern of pricePatterns) {
+      const match = cardHtml.match(pattern);
+      if (match && match[1]) {
+        rawPrice = match[1].replace(/[^\d]/g, '');
+        if (rawPrice && parseInt(rawPrice, 10) > 0) break;
+      }
+    }
+    
+    // Extract year (look for 4-digit year after Bouwjaar or in span elements)
+    let rawYear: string | null = null;
+    const yearPatterns = [
+      />(\d{4})<\/span>/,  // Year in span
+      /Bouwjaar[^<]*?(\d{4})/i,
+      /(\d{4})\s*<\/span>/,
+    ];
+    for (const pattern of yearPatterns) {
+      const match = cardHtml.match(pattern);
+      if (match && match[1]) {
+        const year = parseInt(match[1], 10);
+        if (year >= 1990 && year <= 2030) {
+          rawYear = match[1];
+          break;
+        }
+      }
+    }
+    
+    // Extract mileage (look for number followed by km)
+    let rawMileage: string | null = null;
+    const mileagePatterns = [
+      />(\d{1,3}(?:[.,]?\d{3})*)<[^>]*><!-- -->\s*<!-- -->km/i,
+      />(\d+)<\/span>[^<]*km/i,
+      /(\d{1,3}(?:[.,]?\d{3})*)\s*km/i,
+    ];
+    for (const pattern of mileagePatterns) {
+      const match = cardHtml.match(pattern);
+      if (match && match[1]) {
+        rawMileage = match[1].replace(/[.,]/g, '');
+        break;
+      }
+    }
+    
+    // Extract fuel type
+    let fuelType: string | null = null;
+    const fuelPatterns = [
+      />(\s*Benzine\s*)</i,
+      />(\s*Diesel\s*)</i,
+      />(\s*Elektrisch\s*)</i,
+      />(\s*Hybride\s*)</i,
+      />(\s*Plug-in\s*)</i,
+      /(benzine|diesel|elektrisch|hybride|plug-in|lpg|cng)/i,
+    ];
+    for (const pattern of fuelPatterns) {
+      const match = cardHtml.match(pattern);
+      if (match && match[1]) {
+        fuelType = normalizeFuelType(match[1].trim());
+        break;
+      }
+    }
+    
+    // Extract power (kW)
+    let powerPk: number | null = null;
+    const powerPatterns = [
+      />(\d+)<[^>]*><!-- -->kW/i,
+      />(\d+)\s*kW/i,
+      /(\d+)\s*kW/i,
+      />(\d+)<[^>]*><!-- -->pk/i,
+      /(\d+)\s*pk/i,
+    ];
+    for (const pattern of powerPatterns) {
+      const match = cardHtml.match(pattern);
+      if (match && match[1]) {
+        const value = parseInt(match[1], 10);
+        if (pattern.source.includes('kW')) {
+          powerPk = Math.round(value * 1.36); // Convert kW to pk
+        } else {
+          powerPk = value;
+        }
+        break;
+      }
+    }
+    
+    // Extract transmission
+    let transmission: string | null = null;
+    const transPatterns = [
+      />(Handgeschakeld)</i,
+      />(Automaat)</i,
+      />(CVT)</i,
+      />(DSG)</i,
+      /(automaat|handgeschakeld|manueel|cvt|dsg)/i,
+    ];
+    for (const pattern of transPatterns) {
+      const match = cardHtml.match(pattern);
+      if (match && match[1]) {
+        transmission = normalizeTransmission(match[1].trim());
+        break;
+      }
+    }
+    
+    // Extract body type
+    let bodyType: string | null = null;
+    const bodyPatterns = [
+      />(Hatchback)</i,
+      />(Sedan)</i,
+      />(SUV)</i,
+      />(Stationwagon)</i,
+      />(Stationwagen)</i,
+      />(MPV)</i,
+      />(Cabrio)</i,
+      />(Coupé)</i,
+      />(Coup[eé])</i,
+      /(hatchback|sedan|suv|stationwagon|stationwagen|mpv|cabrio|coup[eé]|terreinwagen)/i,
+    ];
+    for (const pattern of bodyPatterns) {
+      const match = cardHtml.match(pattern);
+      if (match && match[1]) {
+        bodyType = normalizeBodyType(match[1].trim());
+        break;
+      }
+    }
+    
+    // Extract color
+    let color: string | null = null;
+    const colorPatterns = [
+      />(Zwart)</i,
+      />(Wit)</i,
+      />(Grijs)</i,
+      />(Zilver)</i,
+      />(Blauw)</i,
+      />(Rood)</i,
+      />(Groen)</i,
+      /(zwart|wit|grijs|zilver|blauw|rood|groen|geel|oranje|bruin|beige|paars)/i,
+    ];
+    for (const pattern of colorPatterns) {
+      const match = cardHtml.match(pattern);
+      if (match && match[1]) {
+        color = match[1].toLowerCase().trim();
+        break;
+      }
+    }
+    
+    // Extract doors
+    let doors: number | null = null;
+    const doorsMatch = cardHtml.match(/>(\d)<[^>]*><!-- -->-deurs/i) || cardHtml.match(/(\d)\s*-?\s*deurs/i);
+    if (doorsMatch) {
+      doors = parseInt(doorsMatch[1], 10);
+    }
+    
+    // Extract engine CC
+    let engineCc: number | null = null;
+    const ccMatch = cardHtml.match(/>(\d+)<[^>]*><!-- -->cc/i) || cardHtml.match(/(\d+)\s*cc/i);
+    if (ccMatch) {
+      engineCc = parseInt(ccMatch[1], 10);
+    }
+    
+    // Extract dealer info (look for pumpkin/orange colored text followed by city)
+    let dealerName: string | null = null;
+    let dealerCity: string | null = null;
+    
+    const dealerPatterns = [
+      /class="[^"]*text-pumpkin[^"]*"[^>]*>([^<]+)</i,
+      /class="[^"]*dealer[^"]*"[^>]*>([^<]+)</i,
+    ];
+    for (const pattern of dealerPatterns) {
+      const match = cardHtml.match(pattern);
+      if (match && match[1] && match[1].trim().length > 2) {
+        dealerName = match[1].trim();
+        break;
+      }
+    }
+    
+    // City pattern: City (Province)
+    const cityMatch = cardHtml.match(/([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s*\(([A-Z]{2})\)/);
+    if (cityMatch) {
+      dealerCity = cityMatch[1].trim();
+    }
+    
+    // Extract outbound sources from "Bekijk deze auto op:" text
+    const outboundSources: string[] = [];
+    const outboundLinks: Array<{ source: string; url: string }> = [];
+    
+    const bekijkMatch = cardHtml.match(/Bekijk deze auto op:\s*([^<]+)/i);
+    if (bekijkMatch) {
+      const sources = bekijkMatch[1].split(',').map(s => s.trim().toLowerCase());
+      for (const source of sources) {
+        if (source.includes('dealersite')) outboundSources.push('dealersite');
+        else if (source.includes('autotrack')) outboundSources.push('autotrack');
+        else if (source.includes('autoscout24')) outboundSources.push('autoscout24');
+        else if (source.includes('anwb')) outboundSources.push('anwb');
+        else if (source.includes('marktplaats')) outboundSources.push('marktplaats');
+        else if (source.includes('autowereld')) outboundSources.push('autowereld');
+        else if (source.includes('viabovag')) outboundSources.push('viabovag');
+        else if (source.length > 2) outboundSources.push(source);
+      }
+    }
+    
+    // Look for external links in card
+    const linkPattern = /href="(https?:\/\/(?!www\.gaspedaal\.nl)[^"]+)"/gi;
+    let linkMatch;
+    while ((linkMatch = linkPattern.exec(cardHtml)) !== null) {
+      const linkUrl = linkMatch[1];
+      let source = 'other';
+      if (linkUrl.includes('autotrack')) source = 'autotrack';
+      else if (linkUrl.includes('autoscout24')) source = 'autoscout24';
+      else if (linkUrl.includes('anwb.nl')) source = 'anwb';
+      else if (linkUrl.includes('marktplaats')) source = 'marktplaats';
+      else if (linkUrl.includes('autowereld')) source = 'autowereld';
+      else source = 'dealersite';
+      
+      if (!outboundLinks.find(l => l.source === source)) {
+        outboundLinks.push({ source, url: linkUrl });
+        if (!outboundSources.includes(source)) {
+          outboundSources.push(source);
+        }
+      }
+    }
+    
+    // Create the listing object
+    const listing: IndexPageListing = {
+      url,
+      title,
+      price: safeParsePrice(rawPrice),
+      year: safeParseYear(rawYear),
+      mileage: safeParseMileage(rawMileage),
+      fuelType,
+      transmission,
+      bodyType,
+      color,
+      doors,
+      dealerName,
+      dealerCity,
+      outboundSources,
+      outboundLinks,
+      powerPk,
+      rawPrice,
+      rawYear,
+      rawMileage,
+    };
+    
+    // Log parsed data for debugging
+    console.log(`[PARSE] Listing ${listingIndex}: ${title.substring(0, 40)}... | €${listing.price} | ${listing.year} | ${listing.mileage}km | ${listing.fuelType} | Dealer: ${dealerName}`);
+    
+    return listing;
+  } catch (error) {
+    console.error(`[PARSE] Error extracting listing: ${error}`);
+    return null;
+  }
 }
 
 // ===== INDEX PAGE: Extract single listing data =====
