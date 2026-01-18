@@ -408,6 +408,36 @@ export type Database = {
         }
         Relationships: []
       }
+      mileage_coefficients: {
+        Row: {
+          b_eur_per_km: number
+          id: string
+          model_key: string
+          n_samples: number
+          r_squared: number | null
+          updated_at: string | null
+          year_band: string
+        }
+        Insert: {
+          b_eur_per_km: number
+          id?: string
+          model_key: string
+          n_samples: number
+          r_squared?: number | null
+          updated_at?: string | null
+          year_band: string
+        }
+        Update: {
+          b_eur_per_km?: number
+          id?: string
+          model_key?: string
+          n_samples?: number
+          r_squared?: number | null
+          updated_at?: string | null
+          year_band?: string
+        }
+        Relationships: []
+      }
       option_premiums: {
         Row: {
           calculated_at: string | null
