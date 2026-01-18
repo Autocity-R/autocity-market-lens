@@ -574,15 +574,16 @@ function ResultsSection({ result, formData }: { result: ValuationResult; formDat
             </div>
             <div className="text-center">
               <div className="flex items-center justify-center gap-2">
-                <span className="text-3xl font-bold text-success">{result.confidence}%</span>
-                {result.confidence >= 70 ? (
+                <span className="text-3xl font-bold text-success">{result.confidence.score}%</span>
+                {result.confidence.score >= 70 ? (
                   <CheckCircle className="h-5 w-5 text-success" />
                 ) : (
                   <AlertCircle className="h-5 w-5 text-warning" />
                 )}
               </div>
               <p className="text-sm text-muted-foreground mt-1">Betrouwbaarheid</p>
-              <Progress value={result.confidence} className="h-1.5 mt-2" />
+              <p className="text-xs text-muted-foreground">{result.confidence.reason}</p>
+              <Progress value={result.confidence.score} className="h-1.5 mt-2" />
             </div>
             <div className="text-center">
               <p className="text-3xl font-bold text-foreground">{result.cohortSize}</p>
@@ -607,7 +608,7 @@ function ResultsSection({ result, formData }: { result: ValuationResult; formDat
       {/* Price Breakdown */}
       <Card className="bg-card border-border">
         <CardContent className="p-4">
-          <PriceBreakdown breakdown={result.priceBreakdown} />
+          <PriceBreakdown breakdown={result.breakdown} />
         </CardContent>
       </Card>
 
@@ -680,8 +681,8 @@ function ResultsSection({ result, formData }: { result: ValuationResult; formDat
             </div>
           </div>
           <CardDescription>
-            Cohort criteria: ±{result.dataQuality.cohortCriteria.yearRange} jaar, 
-            ±{Math.round(result.dataQuality.cohortCriteria.mileageRange * 100)}% km
+            Cohort niveau: L{result.breakdown.cohortLevel} • 
+            {result.breakdown.cohortSizeLive} live, {result.breakdown.cohortSizeSold} verkocht
           </CardDescription>
         </CardHeader>
         <CardContent>
