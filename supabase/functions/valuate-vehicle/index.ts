@@ -1108,6 +1108,24 @@ async function fetchCohortWithCriteria(
     activeQuery = activeQuery.ilike('body_type', `%${request.bodyType}%`);
   }
 
+  // Power bucket filter - alleen voor L1 (Strict): yearRange=1, mileageRange=0.10
+  const isL1 = criteria.yearRange === 1 && criteria.mileageRange === 0.10;
+  
+  if (isL1) {
+    // Power in pk. hp ≈ pk (verschil <1.4%), kW * 1.35962 = pk
+    const powerPk =
+      typeof request.power?.hp === 'number'
+        ? request.power.hp
+        : (typeof request.power?.kw === 'number' ? request.power.kw * 1.35962 : null);
+
+    if (powerPk) {
+      const minPower = Math.round(powerPk * 0.85);
+      const maxPower = Math.round(powerPk * 1.15);
+      activeQuery = activeQuery.gte('power_pk', minPower).lte('power_pk', maxPower);
+      console.log(`L1 Power filter: ${minPower}-${maxPower} pk (from ${powerPk.toFixed(1)} pk)`);
+    }
+  }
+
   const { data: active } = await activeQuery.limit(100);
 
   // Recent sales query (vehicle_events with sold_confirmed)
@@ -1176,11 +1194,14 @@ serve(async (req) => {
     const cluster = findRealisticCluster(allPrices);
     console.log(`Cluster: ${cluster.clusterPrices.length} in, ${cluster.outlierPrices.length} out, wasFiltered=${cluster.wasFiltered}`);
 
-    // ============ STAP 3: LMV BEREKENING ============
+    // ============ STAP 3: LMV BEREKENING (op IQR-cluster) ============
     const livePrices = activeListings.map(l => l.price).filter(Boolean);
-    const lmvRaw = median(livePrices);  // Median VOOR discount
+    
+    // LMV op IQR-gefilterde cluster - findRealisticCluster handelt n<8 af
+    const liveCluster = findRealisticCluster(livePrices);
+    const lmvRaw = liveCluster.clusterMedian;  // Median van cluster (outlier-robust)
     const lmv = Math.round(lmvRaw * ASKING_PRICE_DISCOUNT);  // -5%
-    console.log(`LMV: raw=${lmvRaw}, adjusted=${lmv}`);
+    console.log(`LMV: raw=${lmvRaw} (cluster n=${liveCluster.clusterPrices.length}, wasFiltered=${liveCluster.wasFiltered}), adjusted=${lmv}`);
 
     // ============ STAP 4: OEV (OBSERVED EXIT VALUE) ============
     const salesForOEV = recentSales
