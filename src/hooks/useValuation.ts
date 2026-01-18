@@ -29,11 +29,13 @@ export interface Comparable {
   isOutlier?: boolean;
 }
 
-export interface CourantheidResult {
+export interface Courantheid3D {
   score: number;
   label: string;
   sellThroughRate: number;
-  avgDaysToSell: number;
+  marketDaysSupply: number;
+  avgDaysOnMarket: number;
+  supplyStatus: 'undersupplied' | 'balanced' | 'oversupplied';
   priceImpact: number;
 }
 
@@ -49,41 +51,64 @@ export interface OptionsAnalysis {
   totalAdjustment: number;
 }
 
+export interface MileageAdjustment {
+  value: number;
+  b_used: number;
+  km_ref: number;
+  n_used: number;
+  source: 'sold' | 'combined' | 'fallback' | 'none';
+  warning?: string;
+}
+
+export interface ValueRange {
+  low: number;
+  mid: number;
+  high: number;
+}
+
 export interface PriceBreakdown {
-  livePriceMedian: number;
-  soldPriceMedian: number;
-  weightedSalesPrice: number;
-  clusterMedian: number;
-  lowestRealistic: number;
+  cohortLevel: 1 | 2 | 3;
+  cohortSizeLive: number;
+  cohortSizeSold: number;
+  LMV: number;
+  LMV_raw: number;
+  OEV: number;
+  lowestRealisticPrice: number;
+  weightedBase: number;
+  mileageAdjustment: MileageAdjustment;
   optionsAdjustment: number;
-  courantheidAdjustment: number;
-  trendAdjustment: number;
-  baseValue: number;
+  courantheidPriceImpact: number;
   finalValue: number;
+}
+
+export interface Confidence {
+  score: number;
+  reason: string;
 }
 
 export interface QualityAssessment {
   quality: 'excellent' | 'good' | 'fair' | 'limited';
   warnings: string[];
-  cohortCriteria: { yearRange: number; mileageRange: number };
 }
 
 export interface ValuationResult {
-  estimatedValue: number;
-  confidence: number;
-  priceBreakdown: PriceBreakdown;
-  priceRange: {
-    low: number;
-    mid: number;
-    high: number;
-  };
-  courantheid: CourantheidResult;
-  marketTrend: MarketTrend;
+  tradeInValue: ValueRange;
+  fairMarketValue: ValueRange;
+  retailValue: ValueRange;
+  confidence: Confidence;
+  warnings: string[];
+  breakdown: PriceBreakdown;
+  courantheid: Courantheid3D;
   comparables: Comparable[];
   outliers: Comparable[];
+  marketTrend: MarketTrend;
   optionsAnalysis: OptionsAnalysis;
   marketInsight: string;
   risks: string[];
+  
+  // Legacy compatibility
+  estimatedValue: number;
+  priceRange: ValueRange;
   cohortSize: number;
   salesCount: number;
   dataQuality: QualityAssessment;
@@ -98,7 +123,6 @@ export function useValuation() {
 
       if (error) throw error;
       
-      // Handle error response from edge function
       if (data.error) {
         throw new Error(data.error);
       }
