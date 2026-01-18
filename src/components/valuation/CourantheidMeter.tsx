@@ -1,11 +1,10 @@
-import { CourantheidResult } from '@/hooks/useValuation';
-import { Progress } from '@/components/ui/progress';
+import { Courantheid3D } from '@/hooks/useValuation';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { Activity, TrendingUp, TrendingDown, Clock } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, Clock, Package } from 'lucide-react';
 
 interface Props {
-  courantheid: CourantheidResult;
+  courantheid: Courantheid3D;
 }
 
 export function CourantheidMeter({ courantheid }: Props) {
@@ -40,6 +39,28 @@ export function CourantheidMeter({ courantheid }: Props) {
     }
   };
 
+  const getSupplyStatusLabel = (status: Courantheid3D['supplyStatus']) => {
+    switch (status) {
+      case 'undersupplied':
+        return 'Onderbezet';
+      case 'balanced':
+        return 'Evenwichtig';
+      case 'oversupplied':
+        return 'Overbezet';
+    }
+  };
+
+  const getSupplyStatusColor = (status: Courantheid3D['supplyStatus']) => {
+    switch (status) {
+      case 'undersupplied':
+        return 'text-success';
+      case 'balanced':
+        return 'text-primary';
+      case 'oversupplied':
+        return 'text-destructive';
+    }
+  };
+
   const formatPercentage = (rate: number) => {
     return `${Math.round(rate * 100)}%`;
   };
@@ -49,7 +70,7 @@ export function CourantheidMeter({ courantheid }: Props) {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Activity className="h-4 w-4 text-primary" />
-          <span className="font-medium text-sm">Courantheid</span>
+          <span className="font-medium text-sm">Courantheid 3D</span>
         </div>
         <Badge variant={getLabelVariant(courantheid.label)}>
           {courantheid.label}
@@ -89,18 +110,45 @@ export function CourantheidMeter({ courantheid }: Props) {
             <span className="text-xs text-muted-foreground">Gem. doorloop</span>
           </div>
           <span className="text-sm font-semibold">
-            {courantheid.avgDaysToSell} dagen
+            {courantheid.avgDaysOnMarket} dagen
+          </span>
+        </div>
+        <div className="p-2 rounded-md bg-muted/50">
+          <div className="flex items-center gap-1 mb-1">
+            <Package className="h-3 w-3 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Marktaanbod</span>
+          </div>
+          <span className="text-sm font-semibold">
+            {courantheid.marketDaysSupply}d voorraad
+          </span>
+        </div>
+        <div className="p-2 rounded-md bg-muted/50">
+          <div className="flex items-center gap-1 mb-1">
+            <Activity className="h-3 w-3 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Marktstatus</span>
+          </div>
+          <span className={cn('text-sm font-semibold', getSupplyStatusColor(courantheid.supplyStatus))}>
+            {getSupplyStatusLabel(courantheid.supplyStatus)}
           </span>
         </div>
       </div>
 
       {/* Price impact */}
       {courantheid.priceImpact !== 0 && (
-        <div className="mt-3 p-2 rounded-md bg-warning/10 border border-warning/20">
+        <div className={cn(
+          'mt-3 p-2 rounded-md border',
+          courantheid.priceImpact > 0 
+            ? 'bg-success/10 border-success/20' 
+            : 'bg-warning/10 border-warning/20'
+        )}>
           <div className="flex items-center gap-2">
-            <TrendingDown className="h-3 w-3 text-warning" />
+            {courantheid.priceImpact > 0 ? (
+              <TrendingUp className="h-3 w-3 text-success" />
+            ) : (
+              <TrendingDown className="h-3 w-3 text-warning" />
+            )}
             <span className="text-xs">
-              Prijscorrectie: {Math.round(courantheid.priceImpact * 100)}%
+              Prijsimpact: {courantheid.priceImpact > 0 ? '+' : ''}{Math.round(courantheid.priceImpact * 100)}%
             </span>
           </div>
         </div>
