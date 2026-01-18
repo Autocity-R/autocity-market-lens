@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.vehicle-values]
 verify_jwt = false
+
+[functions.debug-gaspedaal]
+verify_jwt = false
