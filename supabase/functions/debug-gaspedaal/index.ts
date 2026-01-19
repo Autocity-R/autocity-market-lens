@@ -19,9 +19,148 @@ serve(async (req) => {
       );
     }
 
+    // Parse request body for optional test mode
+    let testMode = 'index'; // 'index' or 'detail'
+    let testOccasionId: string | null = null;
+    try {
+      const body = await req.json();
+      testMode = body.mode || 'index';
+      testOccasionId = body.occasionId || null;
+    } catch {}
+
+    // If testing a specific occasion detail page
+    if (testMode === 'detail' && testOccasionId) {
+      const detailUrl = `https://www.gaspedaal.nl/occasion/${testOccasionId}`;
+      console.log(`[DEBUG] Testing Gaspedaal occasion page: ${detailUrl}`);
+      
+      const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url: detailUrl,
+          formats: ['html', 'links'],
+          onlyMainContent: false,
+          waitFor: 5000,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[DEBUG] Firecrawl error:', errorText);
+        return new Response(
+          JSON.stringify({ error: `Firecrawl error: ${response.status}`, details: errorText }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const data = await response.json();
+      const html = data.data?.html || data.html || '';
+      const links = data.data?.links || data.links || [];
+      
+      console.log('[DEBUG] Detail page HTML length:', html.length);
+      
+      // Extract specs from detail page
+      const specsTable: Record<string, string> = {};
+      const tableRowPattern = /<tr[^>]*>[\s\S]*?<t[hd][^>]*>([^<]+)<\/t[hd]>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<\/tr>/gi;
+      let match;
+      while ((match = tableRowPattern.exec(html)) !== null) {
+        specsTable[match[1].trim()] = match[2].trim();
+      }
+      
+      // Extract external portal links
+      const externalLinkPattern = /href="(https?:\/\/(?!www\.gaspedaal\.nl)[^"]+)"/gi;
+      const externalLinks: string[] = [];
+      while ((match = externalLinkPattern.exec(html)) !== null) {
+        if (!externalLinks.includes(match[1]) && externalLinks.length < 50) {
+          externalLinks.push(match[1]);
+        }
+      }
+      
+      // Categorize external links
+      const portalLinks = externalLinks.filter(url => 
+        url.includes('autotrack') || 
+        url.includes('autoscout') || 
+        url.includes('marktplaats') ||
+        url.includes('anwb') ||
+        url.includes('autowereld') ||
+        url.includes('viabovag')
+      );
+      
+      // Extract license plate
+      const licensePlatePatterns = [
+        /kenteken[^<]*?<[^>]*>([A-Z0-9]{1,3}[-\s]?[A-Z0-9]{2,3}[-\s]?[A-Z0-9]{1,2})</i,
+        /([A-Z]{2}[-\s]?\d{3}[-\s]?[A-Z]{1})/,
+        /([A-Z]{1}[-\s]?\d{3}[-\s]?[A-Z]{2})/,
+        /(\d{1,3}[-\s]?[A-Z]{2,3}[-\s]?[A-Z0-9]{1,2})/,
+      ];
+      let licensePlate: string | null = null;
+      for (const pattern of licensePlatePatterns) {
+        const lpMatch = html.match(pattern);
+        if (lpMatch && lpMatch[1]) {
+          licensePlate = lpMatch[1].replace(/\s/g, '-').toUpperCase();
+          break;
+        }
+      }
+      
+      // Extract options section
+      let optionsHtml: string | null = null;
+      let optionsList: string[] = [];
+      const optionsSectionPatterns = [
+        /uitrusting[^<]*?<[^>]*>([\s\S]*?)<\/(?:div|section|ul)>/i,
+        /opties[^<]*?<[^>]*>([\s\S]*?)<\/(?:div|section|ul)>/i,
+        /class="[^"]*options[^"]*"[^>]*>([\s\S]*?)<\/(?:div|section)>/i,
+        /class="[^"]*equipment[^"]*"[^>]*>([\s\S]*?)<\/(?:div|section)>/i,
+      ];
+      for (const pattern of optionsSectionPatterns) {
+        const optMatch = html.match(pattern);
+        if (optMatch && optMatch[1] && optMatch[1].length > 20) {
+          optionsHtml = optMatch[1].substring(0, 2000);
+          const listItems = optMatch[1].match(/<li[^>]*>([^<]+)<\/li>/gi);
+          if (listItems) {
+            optionsList = listItems.map((item: string) => item.replace(/<[^>]+>/g, '').trim()).filter((item: string) => item.length > 0);
+          }
+          break;
+        }
+      }
+      
+      // Extract sample of the page content
+      const sampleContent = html.substring(0, 5000);
+      
+      return new Response(
+        JSON.stringify({
+          success: true,
+          mode: 'detail',
+          occasionId: testOccasionId,
+          url: detailUrl,
+          htmlLength: html.length,
+          linksFromFirecrawl: links.length,
+          
+          // Key extractions
+          specsTableCount: Object.keys(specsTable).length,
+          specsTable,
+          licensePlate,
+          optionsCount: optionsList.length,
+          optionsList: optionsList.slice(0, 20),
+          
+          // External links (crucial for two-phase scraping)
+          externalLinksCount: externalLinks.length,
+          portalLinks,
+          externalLinksSample: externalLinks.slice(0, 10),
+          
+          // Raw content sample
+          sampleContent,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // ===== INDEX PAGE TEST =====
     const url = 'https://www.gaspedaal.nl/zoeken?sort=date_desc&min_year=2014&min_price=2000&page=1';
     
-    console.log('[DEBUG] Fetching:', url);
+    console.log('[DEBUG] Fetching index page:', url);
     
     const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
       method: 'POST',
@@ -53,6 +192,33 @@ serve(async (req) => {
     console.log('[DEBUG] HTML length:', html.length);
     console.log('[DEBUG] Links count:', links.length);
     
+    // ===== OCCASION ID EXTRACTION (NEW!) =====
+    // Pattern 1: id="oc129649001" on listing cards
+    const occasionIdPattern = /id="oc(\d+)"/g;
+    const occasionIds: string[] = [];
+    let match;
+    while ((match = occasionIdPattern.exec(html)) !== null) {
+      if (!occasionIds.includes(match[1])) {
+        occasionIds.push(match[1]);
+      }
+    }
+    console.log(`[DEBUG] Found ${occasionIds.length} occasion IDs`);
+    
+    // Pattern 2: data-id="123456" or data-occasion-id="123456"
+    const dataIdPattern = /data-(?:occasion-)?id="(\d{6,12})"/g;
+    const dataIds: string[] = [];
+    while ((match = dataIdPattern.exec(html)) !== null) {
+      if (!dataIds.includes(match[1]) && !occasionIds.includes(match[1])) {
+        dataIds.push(match[1]);
+      }
+    }
+    
+    // Construct sample Gaspedaal detail URLs
+    const sampleDetailUrls = occasionIds.slice(0, 5).map(id => ({
+      occasionId: id,
+      gaspedaalDetailUrl: `https://www.gaspedaal.nl/occasion/${id}`,
+    }));
+    
     // ===== ENHANCED ANALYSIS =====
     
     // 1. Parse __NEXT_DATA__ completely
@@ -82,79 +248,25 @@ serve(async (req) => {
       }
     }
     
-    // 2. Find ALL anchor tags with href containing gaspedaal.nl (internal links)
-    const internalLinkPattern = /href="(https:\/\/www\.gaspedaal\.nl\/[^"]+)"/gi;
-    const internalLinks: string[] = [];
-    let match;
-    while ((match = internalLinkPattern.exec(html)) !== null) {
-      if (!internalLinks.includes(match[1])) {
-        internalLinks.push(match[1]);
+    // 2. Find occasion links in HTML
+    const occasionLinkPattern = /href="(\/occasion\/\d+[^"]*)"/gi;
+    const occasionLinksInHtml: string[] = [];
+    while ((match = occasionLinkPattern.exec(html)) !== null) {
+      if (!occasionLinksInHtml.includes(match[1])) {
+        occasionLinksInHtml.push(match[1]);
       }
     }
     
-    // 3. Find occasion links specifically
-    const occasionLinks = internalLinks.filter(l => l.includes('/occasion/') || l.includes('/auto/'));
-    
-    // 4. Look for listing wrapper elements with hrefs
-    const listingWrapperPatterns = [
-      /<a[^>]*href="([^"]*)"[^>]*class="[^"]*listing[^"]*"[^>]*>/gi,
-      /<a[^>]*class="[^"]*listing[^"]*"[^>]*href="([^"]*)"[^>]*>/gi,
-      /<a[^>]*href="([^"]*\/occasion\/[^"]*)"[^>]*>/gi,
-      /<a[^>]*href="([^"]*\/auto\/[^"]*)"[^>]*>/gi,
-    ];
-    
-    const listingWrapperLinks: string[] = [];
-    for (const pattern of listingWrapperPatterns) {
-      while ((match = pattern.exec(html)) !== null) {
-        if (!listingWrapperLinks.includes(match[1])) {
-          listingWrapperLinks.push(match[1]);
-        }
-      }
-    }
-    
-    // 5. Find the anchor tag wrapping each isOccTitle
-    const anchorAroundTitlePattern = /<a[^>]*href="([^"]*)"[^>]*>[\s\S]{0,500}<h2[^>]*class="isOccTitle/gi;
-    const anchorAroundTitles: string[] = [];
-    while ((match = anchorAroundTitlePattern.exec(html)) !== null) {
-      anchorAroundTitles.push(match[1]);
-    }
-    
-    // 6. Reverse pattern - find h2 and look backward for anchor
-    const titleIndices: number[] = [];
-    const titlePattern = /isOccTitle/gi;
-    while ((match = titlePattern.exec(html)) !== null) {
-      titleIndices.push(match.index);
-    }
-    
-    const anchorBeforeTitles: string[] = [];
-    for (const idx of titleIndices.slice(0, 5)) {
-      const windowStart = Math.max(0, idx - 1000);
-      const window = html.substring(windowStart, idx);
-      // Find the last <a href before this point
-      const lastAnchorMatch = window.match(/.*<a[^>]*href="([^"]*)"[^>]*>/s);
-      if (lastAnchorMatch) {
-        anchorBeforeTitles.push(lastAnchorMatch[1]);
-      }
-    }
-    
-    // 7. Extract a more focused sample around the first listing
+    // 3. Extract first listing card with occasion ID for inspection
     let sampleListingCard = '';
-    const firstTitleIndex = html.indexOf('isOccTitle');
-    if (firstTitleIndex > -1) {
-      // Go back to find the start of the card (look for opening tag patterns)
-      const searchBackStart = Math.max(0, firstTitleIndex - 2000);
-      const beforeTitle = html.substring(searchBackStart, firstTitleIndex);
-      
-      // Find the outermost <a tag or card container
-      const cardStartMatch = beforeTitle.match(/.*(<a[^>]*href="[^"]*"[^>]*>)/s);
-      const startOffset = cardStartMatch ? beforeTitle.lastIndexOf(cardStartMatch[1]) : 0;
-      
-      const cardStart = searchBackStart + startOffset;
-      const cardEnd = Math.min(html.length, firstTitleIndex + 1500);
+    const firstOccasionIdIndex = html.indexOf('id="oc');
+    if (firstOccasionIdIndex > -1) {
+      const cardStart = Math.max(0, firstOccasionIdIndex - 200);
+      const cardEnd = Math.min(html.length, firstOccasionIdIndex + 3000);
       sampleListingCard = html.substring(cardStart, cardEnd);
     }
     
-    // 8. Check for any external URLs (autotrack, autoscout, etc) anywhere in the HTML
+    // 4. Check for external URLs (autotrack, autoscout, etc) anywhere in the HTML
     const externalUrlPattern = /href="(https?:\/\/(?!www\.gaspedaal\.nl)[^"]+)"/gi;
     const externalUrls: string[] = [];
     while ((match = externalUrlPattern.exec(html)) !== null) {
@@ -165,29 +277,38 @@ serve(async (req) => {
     
     // Categorize external URLs
     const externalByDomain: Record<string, string[]> = {};
-    for (const url of externalUrls) {
+    for (const extUrl of externalUrls) {
       try {
-        const domain = new URL(url).hostname;
+        const domain = new URL(extUrl).hostname;
         if (!externalByDomain[domain]) externalByDomain[domain] = [];
-        externalByDomain[domain].push(url);
+        externalByDomain[domain].push(extUrl);
       } catch {}
     }
     
     return new Response(
       JSON.stringify({
         success: true,
+        mode: 'index',
         htmlLength: html.length,
         linksFromFirecrawl: links.length,
         
+        // ===== NEW: OCCASION ID EXTRACTION =====
+        occasionIdExtraction: {
+          totalFound: occasionIds.length,
+          pattern: 'id="oc{ID}"',
+          sampleIds: occasionIds.slice(0, 10),
+          additionalDataIds: dataIds.slice(0, 5),
+          sampleDetailUrls,
+          recommendation: occasionIds.length > 0 
+            ? `SUCCESS: Found ${occasionIds.length} occasion IDs. Use https://www.gaspedaal.nl/occasion/{ID} for detail scrapes.`
+            : 'FAILED: No occasion IDs found. Need alternative approach.',
+        },
+        
+        // Occasion links found as href
+        occasionLinksInHtml: occasionLinksInHtml.slice(0, 10),
+        
         // __NEXT_DATA__ analysis
         nextDataAnalysis,
-        
-        // Link analysis
-        internalLinksCount: internalLinks.length,
-        occasionLinks: occasionLinks.slice(0, 20),
-        listingWrapperLinks: listingWrapperLinks.slice(0, 20),
-        anchorAroundTitles: anchorAroundTitles.slice(0, 10),
-        anchorBeforeTitles: anchorBeforeTitles.slice(0, 10),
         
         // External URL analysis
         externalUrlsCount: externalUrls.length,
@@ -200,8 +321,7 @@ serve(async (req) => {
         
         // Original analysis
         hasReactRoot: html.includes('__next') || html.includes('__NEXT_DATA__'),
-        occTitleFound: firstTitleIndex > -1,
-        titleCount: titleIndices.length,
+        titleCount: (html.match(/isOccTitle/g) || []).length,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
