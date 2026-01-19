@@ -187,6 +187,8 @@ export type Database = {
           fingerprint_hash_v2: string | null
           first_seen_at: string
           fuel_type: string | null
+          gaspedaal_detail_url: string | null
+          gaspedaal_occasion_id: string | null
           generation: string | null
           gone_detected_at: string | null
           id: string
@@ -258,6 +260,8 @@ export type Database = {
           fingerprint_hash_v2?: string | null
           first_seen_at?: string
           fuel_type?: string | null
+          gaspedaal_detail_url?: string | null
+          gaspedaal_occasion_id?: string | null
           generation?: string | null
           gone_detected_at?: string | null
           id?: string
@@ -329,6 +333,8 @@ export type Database = {
           fingerprint_hash_v2?: string | null
           first_seen_at?: string
           fuel_type?: string | null
+          gaspedaal_detail_url?: string | null
+          gaspedaal_occasion_id?: string | null
           generation?: string | null
           gone_detected_at?: string | null
           id?: string
@@ -550,6 +556,8 @@ export type Database = {
           description_raw: string | null
           detail_scraped_at: string | null
           first_seen_at: string
+          gaspedaal_detail_url: string | null
+          gaspedaal_occasion_id: string | null
           html_detail: string | null
           html_detail_size: number | null
           id: string
@@ -583,6 +591,8 @@ export type Database = {
           description_raw?: string | null
           detail_scraped_at?: string | null
           first_seen_at?: string
+          gaspedaal_detail_url?: string | null
+          gaspedaal_occasion_id?: string | null
           html_detail?: string | null
           html_detail_size?: number | null
           id?: string
@@ -616,6 +626,8 @@ export type Database = {
           description_raw?: string | null
           detail_scraped_at?: string | null
           first_seen_at?: string
+          gaspedaal_detail_url?: string | null
+          gaspedaal_occasion_id?: string | null
           html_detail?: string | null
           html_detail_size?: number | null
           id?: string
