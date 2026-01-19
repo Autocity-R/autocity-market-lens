@@ -59,6 +59,9 @@ interface IndexPageListing {
   outboundLinks: Array<{ source: string; url: string; foundAt?: string }>;
   powerPk: number | null;
   imageUrlThumbnail: string | null;
+  // GOLDEN MASTERPLAN v4: Gaspedaal occasion ID extraction
+  gaspedaalOccasionId: string | null;
+  gaspedaalDetailUrl: string | null;
   // Raw values for backup
   rawPrice?: string | null;
   rawYear?: string | null;
@@ -1009,7 +1012,63 @@ function extractOutboundLinks(cardHtml: string): Array<{ source: string; url: st
   return outboundLinks;
 }
 
-// ===== GOLDEN MASTERPLAN v4: PARSE __NEXT_DATA__ =====
+// ===== GOLDEN MASTERPLAN v4: EXTRACT EXTERNAL LINKS FROM GASPEDAAL DETAIL PAGE =====
+// This function extracts portal links (autotrack, autoscout, dealer sites) from Gaspedaal's occasion page
+function extractExternalLinksFromGaspedaalDetail(html: string): Array<{ source: string; url: string; foundAt: string }> {
+  const externalLinks: Array<{ source: string; url: string; foundAt: string }> = [];
+  const seenUrls = new Set<string>();
+  
+  // Pattern 1: Direct anchor tags with external URLs
+  const externalLinkPattern = /href="(https?:\/\/(?!www\.gaspedaal\.nl)[^"]+)"/gi;
+  let match;
+  while ((match = externalLinkPattern.exec(html)) !== null) {
+    const url = match[1];
+    // Filter for car portal domains only
+    const isCarPortal = 
+      url.includes('autotrack') ||
+      url.includes('autoscout') ||
+      url.includes('marktplaats') ||
+      url.includes('anwb') ||
+      url.includes('autowereld') ||
+      url.includes('viabovag') ||
+      url.includes('autoweek') ||
+      url.includes('occasion') ||
+      url.includes('auto') ||
+      url.includes('dealer');
+    
+    if (isCarPortal && !seenUrls.has(url) && !url.includes('facebook') && !url.includes('twitter') && !url.includes('instagram')) {
+      seenUrls.add(url);
+      const source = detectLinkSource(url);
+      externalLinks.push({ source, url, foundAt: 'gaspedaal_detail' });
+    }
+  }
+  
+  // Pattern 2: "Bekijk op" buttons/links text
+  const bekijkOpPattern = /Bekijk\s+(?:op|bij|deze auto op)\s*:?\s*<[^>]*href="([^"]+)"/gi;
+  while ((match = bekijkOpPattern.exec(html)) !== null) {
+    const url = match[1];
+    if (!url.includes('gaspedaal.nl') && !seenUrls.has(url)) {
+      seenUrls.add(url);
+      const source = detectLinkSource(url);
+      externalLinks.push({ source, url, foundAt: 'bekijk_op_button' });
+    }
+  }
+  
+  // Pattern 3: data-url or data-href attributes
+  const dataUrlPattern = /data-(?:url|href|redirect)="(https?:\/\/(?!www\.gaspedaal\.nl)[^"]+)"/gi;
+  while ((match = dataUrlPattern.exec(html)) !== null) {
+    const url = match[1];
+    if (!seenUrls.has(url)) {
+      seenUrls.add(url);
+      const source = detectLinkSource(url);
+      externalLinks.push({ source, url, foundAt: 'data_attr' });
+    }
+  }
+  
+  console.log(`[EXTERNAL] Found ${externalLinks.length} external portal links from Gaspedaal detail page`);
+  return externalLinks;
+}
+
 function parseNextDataListings(html: string): any[] {
   const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
   if (!nextDataMatch) return [];
@@ -1102,6 +1161,27 @@ function extractListingFromCardHtml(
   nextDataListing?: any
 ): IndexPageListing | null {
   try {
+    // ===== GOLDEN MASTERPLAN v4: GASPEDAAL OCCASION ID EXTRACTION =====
+    // Extract occasion ID from card HTML (id="oc129649001")
+    let gaspedaalOccasionId: string | null = null;
+    let gaspedaalDetailUrl: string | null = null;
+    
+    // Pattern 1: id="oc{ID}" on listing wrapper
+    const occasionIdMatch = cardHtml.match(/id="oc(\d+)"/);
+    if (occasionIdMatch) {
+      gaspedaalOccasionId = occasionIdMatch[1];
+      gaspedaalDetailUrl = `https://www.gaspedaal.nl/occasion/${gaspedaalOccasionId}`;
+      console.log(`[PARSE] Extracted occasion ID: ${gaspedaalOccasionId} -> ${gaspedaalDetailUrl}`);
+    } else {
+      // Pattern 2: data-occasion-id or data-id
+      const dataIdMatch = cardHtml.match(/data-(?:occasion-)?id="(\d{6,12})"/);
+      if (dataIdMatch) {
+        gaspedaalOccasionId = dataIdMatch[1];
+        gaspedaalDetailUrl = `https://www.gaspedaal.nl/occasion/${gaspedaalOccasionId}`;
+        console.log(`[PARSE] Extracted occasion ID from data-attr: ${gaspedaalOccasionId}`);
+      }
+    }
+    
     // GOLDEN MASTERPLAN v4: Multi-pass outbound extraction
     const outboundLinks = extractOutboundLinks(cardHtml);
     const outboundSources = [...new Set(outboundLinks.map(l => l.source))];
@@ -1123,16 +1203,18 @@ function extractListingFromCardHtml(
       }
     }
     
-    // GOLDEN MASTERPLAN v4: Generate canonical URL based on best external link or hash
+    // GOLDEN MASTERPLAN v4: Generate canonical URL 
+    // Priority: Gaspedaal occasion URL > External URL > Hash fallback
     let canonicalUrl: string;
-    if (outboundLinks.length > 0) {
-      // Use best external URL as canonical
+    if (gaspedaalDetailUrl) {
+      // PRIMARY: Use Gaspedaal's own occasion page as canonical
+      canonicalUrl = gaspedaalDetailUrl;
+    } else if (outboundLinks.length > 0) {
+      // SECONDARY: Use best external URL as canonical
       const bestLink = selectBestDetailUrl('', outboundLinks);
       canonicalUrl = canonicalizeExternalUrl(bestLink.url);
     } else {
-      // Fallback: hash-based identifier (stabiel)
-      const fingerprintData = `${title}|${listingIndex}`;
-      // Create a simple hash synchronously for URL generation
+      // FALLBACK: hash-based identifier (stabiel)
       const simpleHash = title.split('').reduce((acc, char) => {
         return ((acc << 5) - acc + char.charCodeAt(0)) | 0;
       }, 0).toString(16).replace('-', '');
@@ -1347,13 +1429,15 @@ function extractListingFromCardHtml(
       outboundLinks,
       powerPk,
       imageUrlThumbnail,
+      gaspedaalOccasionId,
+      gaspedaalDetailUrl,
       rawPrice,
       rawYear,
       rawMileage,
     };
     
     // Log parsed data for debugging
-    console.log(`[PARSE] Listing ${listingIndex}: ${title.substring(0, 40)}... | €${listing.price} | ${listing.year} | ${listing.mileage}km | ${listing.fuelType} | ${powerPk}pk | Dealer: ${dealerName} | Links: ${outboundLinks.length}`);
+    console.log(`[PARSE] Listing ${listingIndex}: ${title.substring(0, 40)}... | €${listing.price} | ${listing.year} | ${listing.mileage}km | ${listing.fuelType} | ${powerPk}pk | OccID: ${gaspedaalOccasionId} | Dealer: ${dealerName} | Links: ${outboundLinks.length}`);
     
     return listing;
   } catch (error) {
@@ -2112,40 +2196,66 @@ async function runDiscoveryMode(
       );
       const isNewListing = !preliminaryLookup;
       
-      // GOLDEN MASTERPLAN v4: DETAIL SCRAPE DECISION
+      // GOLDEN MASTERPLAN v4: DETAIL SCRAPE DECISION - GASPEDAAL OCCASION URL PRIORITY
       if (indexOnly) {
         if (isNewListing) {
           stats.skippedIndexOnly++;
           console.log(`[INDEX ONLY] Skipping detail page for new listing`);
         }
       } else if (isNewListing) {
-        // NEW LISTING - check if we have outbound links
-        if (listing.outboundLinks.length > 0) {
-          const budgetCheck = checkSafetyLimits(safety, safetyConfig);
-          if (!budgetCheck.shouldStop) {
+        // NEW LISTING - Try to scrape detail page
+        const budgetCheck = checkSafetyLimits(safety, safetyConfig);
+        
+        if (!budgetCheck.shouldStop) {
+          // PRIORITY 1: Use Gaspedaal occasion page (extracted from card HTML)
+          if (listing.gaspedaalDetailUrl) {
+            chosenDetailSource = 'gaspedaal_occasion';
+            chosenDetailUrl = listing.gaspedaalDetailUrl;
+            console.log(`[DETAIL] FIRST SEEN: Using Gaspedaal occasion page -> ${chosenDetailUrl}`);
+            
+            stats.detailAttempted++;
+            detailHtml = await scrapeWithFirecrawl(chosenDetailUrl, firecrawlKey, safety, false, dryRun);
+            
+            if (detailHtml) {
+              detailData = extractDetailPageData(detailHtml);
+              console.log(`[DETAIL] Extracted ${detailData.optionsRawList?.length || 0} options from gaspedaal_occasion`);
+              
+              // PHASE 2: Extract external portal links from Gaspedaal occasion page
+              const externalLinks = extractExternalLinksFromGaspedaalDetail(detailHtml);
+              if (externalLinks.length > 0) {
+                console.log(`[DETAIL] Found ${externalLinks.length} external portal links on Gaspedaal page`);
+                for (const extLink of externalLinks) {
+                  if (!listing.outboundLinks.find(l => l.url === extLink.url)) {
+                    listing.outboundLinks.push(extLink);
+                  }
+                }
+              }
+            } else {
+              console.log(`[DETAIL] Gaspedaal occasion page failed to scrape`);
+            }
+            await delay(DELAY_BETWEEN_REQUESTS_MS);
+            
+          // PRIORITY 2: Fallback to external links if available  
+          } else if (listing.outboundLinks.length > 0) {
             const bestUrl = selectBestDetailUrl('', listing.outboundLinks);
             chosenDetailSource = bestUrl.source;
             chosenDetailUrl = bestUrl.url;
-            console.log(`[DETAIL] FIRST SEEN: Will scrape ${bestUrl.source} -> ${bestUrl.url.substring(0, 80)}...`);
+            console.log(`[DETAIL] FIRST SEEN: Using external portal ${bestUrl.source} -> ${bestUrl.url.substring(0, 80)}...`);
             
             stats.detailAttempted++;
             detailHtml = await scrapeWithFirecrawl(bestUrl.url, firecrawlKey, safety, false, dryRun);
             if (detailHtml) {
               detailData = extractDetailPageData(detailHtml);
               console.log(`[DETAIL] Extracted ${detailData.optionsRawList?.length || 0} options from ${bestUrl.source}`);
-            } else if (bestUrl.source !== 'gaspedaal') {
-              // Fallback
-              console.log(`[DETAIL] ${bestUrl.source} failed, trying Gaspedaal fallback...`);
-              chosenDetailSource = 'gaspedaal';
-              chosenDetailUrl = listing.url;
             }
             await delay(DELAY_BETWEEN_REQUESTS_MS);
+            
+          } else {
+            // NO DETAIL URL AVAILABLE
+            detailStatus = 'no_links';
+            stats.detailNoLinks++;
+            console.log(`[DETAIL] NO LINKS: No occasion ID and no outbound links found`);
           }
-        } else {
-          // NO EXTERNAL LINKS
-          detailStatus = 'no_links';
-          stats.detailNoLinks++;
-          console.log(`[DETAIL] NO LINKS: Marking as no_links`);
         }
       } else {
         // EXISTING LISTING - check if detail already done
