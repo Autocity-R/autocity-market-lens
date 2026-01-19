@@ -24,8 +24,10 @@ serve(async (req) => {
     let testOccasionId: string | null = null;
     try {
       const body = await req.json();
-      testMode = body.mode || 'index';
-      testOccasionId = body.occasionId || null;
+      // Support both naming conventions
+      testMode = body.testMode || body.mode || 'index';
+      testOccasionId = body.testOccasionId || body.occasionId || null;
+      console.log(`[DEBUG] Request: testMode=${testMode}, testOccasionId=${testOccasionId}`);
     } catch {}
 
     // If testing a specific occasion detail page
@@ -33,6 +35,7 @@ serve(async (req) => {
       const detailUrl = `https://www.gaspedaal.nl/occasion/${testOccasionId}`;
       console.log(`[DEBUG] Testing Gaspedaal occasion page: ${detailUrl}`);
       
+      // Try with longer wait time and also request markdown for better parsing
       const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
         method: 'POST',
         headers: {
@@ -41,9 +44,9 @@ serve(async (req) => {
         },
         body: JSON.stringify({
           url: detailUrl,
-          formats: ['html', 'links'],
+          formats: ['html', 'links', 'markdown'],
           onlyMainContent: false,
-          waitFor: 5000,
+          waitFor: 10000, // Increased from 5000 to 10000ms
         }),
       });
 
@@ -59,15 +62,59 @@ serve(async (req) => {
       const data = await response.json();
       const html = data.data?.html || data.html || '';
       const links = data.data?.links || data.links || [];
+      const markdown = data.data?.markdown || data.markdown || '';
       
       console.log('[DEBUG] Detail page HTML length:', html.length);
+      console.log('[DEBUG] Detail page Markdown length:', markdown.length);
       
-      // Extract specs from detail page
+      // Check if page actually loaded (look for SPA skeleton indicators)
+      const isSkeletonOnly = html.includes('overflow: hidden') && 
+                             html.length < 200000 && 
+                             !html.includes('data-testid="occasion-detail"');
+      
+      // Check for actual vehicle content in markdown
+      const hasVehicleContent = markdown.includes('€') || 
+                                markdown.includes('km') || 
+                                markdown.includes('Kenteken') ||
+                                markdown.includes('Bouwjaar');
+      
+      // Extract specs from detail page - try multiple patterns
       const specsTable: Record<string, string> = {};
+      
+      // Pattern 1: Traditional table rows
       const tableRowPattern = /<tr[^>]*>[\s\S]*?<t[hd][^>]*>([^<]+)<\/t[hd]>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<\/tr>/gi;
       let match;
       while ((match = tableRowPattern.exec(html)) !== null) {
         specsTable[match[1].trim()] = match[2].trim();
+      }
+      
+      // Pattern 2: dl/dt/dd definition lists
+      const dlPattern = /<dt[^>]*>([^<]+)<\/dt>\s*<dd[^>]*>([^<]+)<\/dd>/gi;
+      while ((match = dlPattern.exec(html)) !== null) {
+        specsTable[match[1].trim()] = match[2].trim();
+      }
+      
+      // Pattern 3: Label + value spans
+      const labelValuePattern = /<span[^>]*class="[^"]*label[^"]*"[^>]*>([^<]+)<\/span>\s*[^<]*<span[^>]*>([^<]+)<\/span>/gi;
+      while ((match = labelValuePattern.exec(html)) !== null) {
+        specsTable[match[1].trim()] = match[2].trim();
+      }
+      
+      // Extract specs from markdown (cleaner)
+      const markdownSpecs: Record<string, string> = {};
+      const mdLinePattern = /\*\*([^*]+)\*\*:\s*([^\n]+)/g;
+      while ((match = mdLinePattern.exec(markdown)) !== null) {
+        markdownSpecs[match[1].trim()] = match[2].trim();
+      }
+      
+      // Pipe-separated markdown tables
+      const mdTablePattern = /\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|/g;
+      while ((match = mdTablePattern.exec(markdown)) !== null) {
+        const key = match[1].trim();
+        const value = match[2].trim();
+        if (key && value && key !== '---' && !key.includes('---')) {
+          markdownSpecs[key] = value;
+        }
       }
       
       // Extract external portal links
@@ -79,6 +126,14 @@ serve(async (req) => {
         }
       }
       
+      // Also check Firecrawl links array for external URLs
+      const externalFromFirecrawl = (links as string[]).filter((url: string) => 
+        !url.includes('gaspedaal.nl') && 
+        (url.includes('autotrack') || url.includes('autoscout') || 
+         url.includes('marktplaats') || url.includes('anwb') ||
+         url.includes('dealer') || url.includes('occasion'))
+      );
+      
       // Categorize external links
       const portalLinks = externalLinks.filter(url => 
         url.includes('autotrack') || 
@@ -89,19 +144,28 @@ serve(async (req) => {
         url.includes('viabovag')
       );
       
-      // Extract license plate
+      // Extract license plate - improved patterns
       const licensePlatePatterns = [
-        /kenteken[^<]*?<[^>]*>([A-Z0-9]{1,3}[-\s]?[A-Z0-9]{2,3}[-\s]?[A-Z0-9]{1,2})</i,
+        /kenteken[:\s]*<[^>]*>([A-Z0-9]{1,3}[-\s]?[A-Z0-9]{2,3}[-\s]?[A-Z0-9]{1,2})</i,
+        /Kenteken[:\s]*([A-Z0-9]{1,3}[-\s]?[A-Z0-9]{2,3}[-\s]?[A-Z0-9]{1,2})/i,
         /([A-Z]{2}[-\s]?\d{3}[-\s]?[A-Z]{1})/,
         /([A-Z]{1}[-\s]?\d{3}[-\s]?[A-Z]{2})/,
         /(\d{1,3}[-\s]?[A-Z]{2,3}[-\s]?[A-Z0-9]{1,2})/,
       ];
       let licensePlate: string | null = null;
+      // Try HTML first
       for (const pattern of licensePlatePatterns) {
         const lpMatch = html.match(pattern);
         if (lpMatch && lpMatch[1]) {
           licensePlate = lpMatch[1].replace(/\s/g, '-').toUpperCase();
           break;
+        }
+      }
+      // Try markdown if not found
+      if (!licensePlate) {
+        const mdPlateMatch = markdown.match(/Kenteken[:\s]*([A-Z0-9-]+)/i);
+        if (mdPlateMatch) {
+          licensePlate = mdPlateMatch[1].replace(/\s/g, '-').toUpperCase();
         }
       }
       
@@ -126,8 +190,20 @@ serve(async (req) => {
         }
       }
       
+      // Extract options from markdown
+      const mdOptionsMatch = markdown.match(/(?:Uitrusting|Opties|Accessoires)[:\s]*([\s\S]*?)(?:\n\n|$)/i);
+      const markdownOptions: string[] = [];
+      if (mdOptionsMatch) {
+        const optLines = mdOptionsMatch[1].split('\n').filter((l: string) => l.trim().startsWith('-') || l.trim().startsWith('•'));
+        for (const line of optLines) {
+          const opt = line.replace(/^[-•*]\s*/, '').trim();
+          if (opt.length > 2) markdownOptions.push(opt);
+        }
+      }
+      
       // Extract sample of the page content
       const sampleContent = html.substring(0, 5000);
+      const markdownSample = markdown.substring(0, 3000);
       
       return new Response(
         JSON.stringify({
@@ -136,22 +212,43 @@ serve(async (req) => {
           occasionId: testOccasionId,
           url: detailUrl,
           htmlLength: html.length,
+          markdownLength: markdown.length,
           linksFromFirecrawl: links.length,
           
-          // Key extractions
+          // Rendering status
+          renderingStatus: {
+            isSkeletonOnly,
+            hasVehicleContent,
+            recommendation: hasVehicleContent 
+              ? 'Page rendered successfully with vehicle data'
+              : isSkeletonOnly 
+                ? 'Page is SPA skeleton - content not rendered'
+                : 'Page rendered but no vehicle data found'
+          },
+          
+          // Key extractions - HTML
           specsTableCount: Object.keys(specsTable).length,
           specsTable,
           licensePlate,
           optionsCount: optionsList.length,
           optionsList: optionsList.slice(0, 20),
           
+          // Key extractions - Markdown
+          markdownSpecsCount: Object.keys(markdownSpecs).length,
+          markdownSpecs,
+          markdownOptionsCount: markdownOptions.length,
+          markdownOptions: markdownOptions.slice(0, 20),
+          
           // External links (crucial for two-phase scraping)
           externalLinksCount: externalLinks.length,
+          externalFromFirecrawlCount: externalFromFirecrawl.length,
           portalLinks,
           externalLinksSample: externalLinks.slice(0, 10),
+          externalFromFirecrawl: externalFromFirecrawl.slice(0, 10),
           
-          // Raw content sample
+          // Raw content samples
           sampleContent,
+          markdownSample,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
