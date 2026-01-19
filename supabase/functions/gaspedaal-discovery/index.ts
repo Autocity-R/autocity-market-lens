@@ -39,7 +39,8 @@ const COMPLETENESS_PARTIAL_THRESHOLD = 40;
 // ===== TYPES =====
 type JobMode = 'discovery' | 'lifecycle_check';
 type ListingStatus = 'active' | 'gone_suspected' | 'sold_confirmed' | 'returned';
-type DetailStatus = 'pending' | 'ok' | 'partial' | 'failed';
+type DetailStatus = 'pending' | 'ok' | 'partial' | 'failed' | 'no_links' | 'skipped_existing';
+type DealerKeyConfidence = 'HIGH' | 'MEDIUM' | 'LOW';
 
 interface IndexPageListing {
   url: string;
@@ -55,8 +56,9 @@ interface IndexPageListing {
   dealerName: string | null;
   dealerCity: string | null;
   outboundSources: string[];
-  outboundLinks: Array<{ source: string; url: string }>;
+  outboundLinks: Array<{ source: string; url: string; foundAt?: string }>;
   powerPk: number | null;
+  imageUrlThumbnail: string | null;
   // Raw values for backup
   rawPrice?: string | null;
   rawYear?: string | null;
@@ -130,10 +132,96 @@ interface JobStats {
   detailPartial: number;
   detailFailed: number;
   detailHealed: number;
+  detailNoLinks: number;
   avgCompletenessScore: number;
   completenessScores: number[];
   missingFieldsCounts: Record<string, number>;
 }
+
+// ===== GOLDEN MASTERPLAN v4: MODEL ALIASES =====
+const MODEL_ALIASES: Record<string, string> = {
+  'golf_7': 'golf', 'golf_vii': 'golf', 'golf_8': 'golf', 'golf_viii': 'golf', 'golf_gti': 'golf', 'golf_r': 'golf',
+  '3_serie': '3_serie', '3_series': '3_serie', '318i': '3_serie', '320i': '3_serie', '330i': '3_serie', '330e': '3_serie',
+  '5_serie': '5_serie', '5_series': '5_serie', '520i': '5_serie', '530i': '5_serie', '530e': '5_serie',
+  'c_klasse': 'c_klasse', 'c_class': 'c_klasse', 'c180': 'c_klasse', 'c200': 'c_klasse', 'c220': 'c_klasse', 'c300': 'c_klasse',
+  'e_klasse': 'e_klasse', 'e_class': 'e_klasse', 'e200': 'e_klasse', 'e220': 'e_klasse', 'e300': 'e_klasse',
+  'a_klasse': 'a_klasse', 'a_class': 'a_klasse', 'a180': 'a_klasse', 'a200': 'a_klasse',
+  'a3': 'a3', 'a3_sportback': 'a3', 'a3_limousine': 'a3',
+  'a4': 'a4', 'a4_avant': 'a4', 'a4_limousine': 'a4',
+  'a6': 'a6', 'a6_avant': 'a6', 'a6_limousine': 'a6',
+  'polo': 'polo', 'polo_gti': 'polo',
+  't_roc': 't_roc', 'troc': 't_roc',
+  'tiguan': 'tiguan', 'tiguan_allspace': 'tiguan',
+  'model_3': 'model_3', 'model3': 'model_3',
+  'model_y': 'model_y', 'modely': 'model_y',
+  'model_s': 'model_s', 'models': 'model_s',
+  'model_x': 'model_x', 'modelx': 'model_x',
+  'yaris': 'yaris', 'yaris_cross': 'yaris',
+  'corolla': 'corolla', 'corolla_cross': 'corolla',
+  'rav4': 'rav4', 'rav_4': 'rav4',
+  'kona': 'kona', 'kona_electric': 'kona',
+  'tucson': 'tucson',
+  'ioniq': 'ioniq', 'ioniq_5': 'ioniq_5', 'ioniq_6': 'ioniq_6',
+  'niro': 'niro', 'e_niro': 'niro',
+  'ev6': 'ev6',
+  'ceed': 'ceed', 'proceed': 'ceed', 'xceed': 'ceed',
+  '208': '208', 'e_208': '208',
+  '308': '308', 'e_308': '308',
+  '508': '508',
+  '2008': '2008', 'e_2008': '2008',
+  '3008': '3008', 'e_3008': '3008',
+  'clio': 'clio',
+  'captur': 'captur',
+  'megane': 'megane', 'megane_e_tech': 'megane',
+  'zoe': 'zoe',
+  'octavia': 'octavia', 'octavia_combi': 'octavia',
+  'superb': 'superb', 'superb_combi': 'superb',
+  'kodiaq': 'kodiaq',
+  'kamiq': 'kamiq',
+  'enyaq': 'enyaq', 'enyaq_iv': 'enyaq',
+  'leon': 'leon',
+  'ibiza': 'ibiza',
+  'ateca': 'ateca',
+  'arona': 'arona',
+  'formentor': 'formentor',
+  'born': 'born',
+  'id_3': 'id_3', 'id3': 'id_3',
+  'id_4': 'id_4', 'id4': 'id_4',
+  'id_5': 'id_5', 'id5': 'id_5',
+  'xc40': 'xc40',
+  'xc60': 'xc60',
+  'xc90': 'xc90',
+  'v60': 'v60',
+  's60': 's60',
+  'v90': 'v90',
+  's90': 's90',
+  'c40': 'c40',
+  'ex30': 'ex30',
+  'ex90': 'ex90',
+  'corsa': 'corsa', 'corsa_e': 'corsa',
+  'astra': 'astra',
+  'mokka': 'mokka', 'mokka_e': 'mokka',
+  'grandland': 'grandland', 'grandland_x': 'grandland',
+  'crossland': 'crossland', 'crossland_x': 'crossland',
+  'focus': 'focus',
+  'fiesta': 'fiesta',
+  'puma': 'puma',
+  'kuga': 'kuga',
+  'mustang_mach_e': 'mustang_mach_e', 'mach_e': 'mustang_mach_e',
+  '500': '500', '500e': '500', 'fiat_500': '500',
+  'c3': 'c3',
+  'c4': 'c4',
+  'c5_aircross': 'c5_aircross', 'c5': 'c5',
+  'e_c4': 'c4',
+  'mini_cooper': 'cooper', 'cooper': 'cooper', 'cooper_s': 'cooper', 'cooper_se': 'cooper',
+  'countryman': 'countryman',
+  'clubman': 'clubman',
+  '01': '01', 'lynk_01': '01',
+  'cx_30': 'cx_30', 'cx30': 'cx_30',
+  'cx_5': 'cx_5', 'cx5': 'cx_5',
+  'mx_30': 'mx_30', 'mx30': 'mx_30',
+  'mazda3': 'mazda3', 'mazda_3': 'mazda3',
+};
 
 // ===== HELPER: SHA-256 Hash =====
 async function createHash(data: string): Promise<string> {
@@ -159,21 +247,197 @@ async function hashVin(vin: string | null): Promise<string | null> {
   return createHash(normalized);
 }
 
-// ===== CANONICAL URL: Normalize Gaspedaal URLs =====
-function canonicalizeGaspedaalUrl(url: string): string {
+// ===== GOLDEN MASTERPLAN v4: HTML SANITIZER (KRITIEK!) =====
+function sanitizeReactHtml(html: string): string {
+  // Remove React hydration comments that break parsing
+  // Converts: >130<!-- -->000<!-- -->km => >130000km
+  return html
+    .replace(/<!--\s*-->/g, '')
+    .replace(/<!-- -->/g, '')
+    .replace(/<!--.*?-->/g, '');
+}
+
+// ===== GOLDEN MASTERPLAN v4: CANONICAL URL FUNCTIONS =====
+function canonicalizeExternalUrl(url: string): string {
   try {
-    const urlObj = new URL(url);
-    // Remove tracking params
-    const trackingParams = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'ref', 'origin', 'fbclid', 'gclid', 'msclkid'];
-    trackingParams.forEach(p => urlObj.searchParams.delete(p));
-    // Remove trailing slash
-    let canonical = urlObj.toString().replace(/\/$/, '');
-    // Normalize www
-    canonical = canonical.replace('://gaspedaal.nl', '://www.gaspedaal.nl');
-    return canonical;
+    const parsed = new URL(url);
+    // Strip tracking parameters
+    const trackingParams = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 
+                           'ref', 'origin', 'fbclid', 'gclid', 'msclkid', 'source'];
+    trackingParams.forEach(p => parsed.searchParams.delete(p));
+    // Normalize: lowercase path, remove trailing slash
+    return parsed.origin + parsed.pathname.toLowerCase().replace(/\/$/, '');
   } catch {
-    return url;
+    return url.toLowerCase().split('?')[0];
   }
+}
+
+async function hashExternalUrl(url: string | null): Promise<string | null> {
+  if (!url) return null;
+  const canonical = canonicalizeExternalUrl(url);
+  return createHash(canonical);
+}
+
+// ===== GOLDEN MASTERPLAN v4: DEALER KEY EXTRACTION =====
+function extractDealerKey(
+  outboundLinks: Array<{ source: string; url: string }>,
+  dealerName: string | null
+): { dealerKey: string; confidence: DealerKeyConfidence } {
+  // Priority 1: Dealer domain from outbound links (HIGH confidence)
+  const dealerLink = outboundLinks.find(l => l.source === 'dealersite');
+  if (dealerLink?.url) {
+    try {
+      const domain = new URL(dealerLink.url).hostname
+        .replace(/^www\./, '')
+        .toLowerCase();
+      return { dealerKey: domain, confidence: 'HIGH' };
+    } catch {}
+  }
+  
+  // Priority 2: Normalized dealer name (MEDIUM confidence)
+  if (dealerName && dealerName.length > 2) {
+    const normalized = dealerName
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+      .substring(0, 30);
+    if (normalized.length >= 3) {
+      return { dealerKey: normalized, confidence: 'MEDIUM' };
+    }
+  }
+  
+  // Priority 3: Unknown (LOW confidence - no soft matching allowed)
+  return { dealerKey: 'unknown', confidence: 'LOW' };
+}
+
+// ===== GOLDEN MASTERPLAN v4: MODEL NORMALIZATION =====
+function normalizeModelKey(make: string, model: string): string {
+  const makeNorm = make.toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .replace('mercedesbenz', 'mercedes')
+    .replace('volkswagen', 'vw')
+    .replace('lynkco', 'lynk');
+  
+  const modelNorm = model.toLowerCase()
+    .replace(/[^a-z0-9]/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^_|_$/g, '');
+  
+  const baseModel = MODEL_ALIASES[modelNorm] || modelNorm.split('_')[0];
+  return `${makeNorm}_${baseModel}`;
+}
+
+// ===== GOLDEN MASTERPLAN v4: FINGERPRINT v2 (Dealer-Scoped, No Price, No Color) =====
+async function generateVehicleFingerprintV2(
+  dealerKey: string,
+  listing: {
+    make?: string | null;
+    model?: string | null;
+    year?: number | null;
+    fuelType?: string | null;
+    transmission?: string | null;
+    bodyType?: string | null;
+    mileage?: number | null;
+    powerPk?: number | null;
+    imageUrl?: string | null;
+  }
+): Promise<string> {
+  const normalize = (s: string | null | undefined) => 
+    (s || '').toLowerCase().trim().replace(/\s+/g, '');
+  
+  // Buckets (robuuster - 10k voor mileage, 10pk voor power)
+  const mileageBucket = listing.mileage 
+    ? Math.round(listing.mileage / 10000) * 10000 : 0;  // 10k buckets
+  const powerBucket = listing.powerPk
+    ? Math.round(listing.powerPk / 10) * 10 : 0;        // 10pk buckets
+  
+  // Model normalisatie met aliases
+  const modelKey = (listing.make && listing.model)
+    ? normalizeModelKey(listing.make, listing.model)
+    : `${normalize(listing.make)}_${normalize(listing.model)}`;
+  
+  // Image hash (bestandsnaam uit URL - max 20 chars)
+  const imageHash = listing.imageUrl 
+    ? listing.imageUrl.split('/').pop()?.split('?')[0]?.substring(0, 20) || '' 
+    : '';
+  
+  // DEALER KEY is eerste element - maakt fingerprint dealer-scoped
+  // GEEN prijs, GEEN kleur in fingerprint!
+  const fingerprintBase = [
+    dealerKey,                    // <= DEALER SCOPED
+    modelKey,
+    listing.year || 'unknown',
+    normalize(listing.fuelType),
+    normalize(listing.transmission),
+    normalize(listing.bodyType),
+    mileageBucket,
+    powerBucket,
+    imageHash,
+  ].join('|');
+  
+  return createHash(fingerprintBase);
+}
+
+// ===== OLD FINGERPRINT (for backwards compatibility/logging) =====
+function generateVehicleFingerprint(listing: {
+  make?: string | null;
+  model?: string | null;
+  year?: number | null;
+  fuelType?: string | null;
+  bodyType?: string | null;
+  color?: string | null;
+  mileage?: number | null;
+  dealerName?: string | null;
+}): string {
+  const normalize = (s: string | null | undefined) => 
+    (s || '').toLowerCase().trim().replace(/\s+/g, '');
+  
+  const mileageBucket = listing.mileage 
+    ? Math.round(listing.mileage / 5000) * 5000 
+    : 0;
+  
+  return [
+    normalize(listing.make),
+    normalize(listing.model),
+    listing.year || 'unknown',
+    normalize(listing.fuelType),
+    normalize(listing.bodyType),
+    normalize(listing.color),
+    mileageBucket,
+    normalize(listing.dealerName),
+  ].join('|');
+}
+
+// ===== GOLDEN MASTERPLAN v4: READINESS DETERMINATION =====
+function determineReadiness(
+  listing: any,
+  dealerKeyConfidence: DealerKeyConfidence,
+  detailStatus: DetailStatus,
+  completenessScore: number
+): { listingReady: boolean; taxationReady: boolean } {
+  
+  // LISTING READY: voldoende voor markt monitoring
+  const listingReady = !!(
+    listing.make &&
+    listing.model &&
+    listing.year &&
+    listing.price &&
+    listing.fuel_type
+  );
+  
+  // TAXATION READY: voldoende voor precieze taxatie
+  const taxationReady = !!(
+    listingReady &&
+    listing.mileage &&
+    listing.transmission &&
+    listing.body_type &&
+    dealerKeyConfidence !== 'LOW' &&
+    (
+      (detailStatus === 'ok' || detailStatus === 'partial') && completenessScore >= 70
+      || detailStatus === 'no_links' // Listing-only mode (lagere confidence)
+    )
+  );
+  
+  return { listingReady, taxationReady };
 }
 
 // ===== COMPLETENESS SCORING =====
@@ -215,37 +479,6 @@ function calculateCompletenessScore(
   }
   
   return { score, status, missingFields };
-}
-
-// ===== HELPER: Vehicle Fingerprint (for non-dedup purposes only - logging) =====
-function generateVehicleFingerprint(listing: {
-  make?: string | null;
-  model?: string | null;
-  year?: number | null;
-  fuelType?: string | null;
-  bodyType?: string | null;
-  color?: string | null;
-  mileage?: number | null;
-  dealerName?: string | null;
-}): string {
-  const normalize = (s: string | null | undefined) => 
-    (s || '').toLowerCase().trim().replace(/\s+/g, '');
-  
-  // 5000km buckets for robustness
-  const mileageBucket = listing.mileage 
-    ? Math.round(listing.mileage / 5000) * 5000 
-    : 0;
-  
-  return [
-    normalize(listing.make),
-    normalize(listing.model),
-    listing.year || 'unknown',
-    normalize(listing.fuelType),
-    normalize(listing.bodyType),
-    normalize(listing.color),
-    mileageBucket,
-    normalize(listing.dealerName),
-  ].join('|');
 }
 
 // ===== HELPER: Content Hash =====
@@ -442,11 +675,11 @@ async function saveRawListing(
   stats: JobStats,
   safety: SafetyState,
   chosenDetailSource: string | null,
-  chosenDetailUrl: string | null
+  chosenDetailUrl: string | null,
+  canonicalUrl: string
 ): Promise<string | null> {
   try {
     const now = new Date().toISOString();
-    const canonicalUrl = canonicalizeGaspedaalUrl(listing.url);
     
     // Prepare raw_specs with ALL extracted data
     const rawSpecs: Record<string, any> = {
@@ -645,15 +878,18 @@ async function scrapeWithFirecrawl(
     }
 
     const data = await response.json();
-    const html = data.data?.html || data.html || null;
+    const rawHtml = data.data?.html || data.html || null;
     
-    if (html) {
-      console.log(`[FIRECRAWL] Success: ${url} (${html.length} bytes)`);
+    if (rawHtml) {
+      // GOLDEN MASTERPLAN v4: Apply HTML sanitizer IMMEDIATELY
+      const html = sanitizeReactHtml(rawHtml);
+      console.log(`[FIRECRAWL] Success: ${url} (${html.length} bytes, sanitized)`);
+      return html;
     } else {
       console.error(`[FIRECRAWL] No HTML returned for ${url}`);
     }
     
-    return html;
+    return null;
   } catch (error) {
     console.error(`[FIRECRAWL] Fetch error for ${url}:`, error);
     safety.errors++;
@@ -661,42 +897,57 @@ async function scrapeWithFirecrawl(
   }
 }
 
+// ===== GOLDEN MASTERPLAN v4: LINK SOURCE DETECTION =====
+function detectLinkSource(url: string): string {
+  if (url.includes('autotrack')) return 'autotrack';
+  if (url.includes('autoscout24')) return 'autoscout24';
+  if (url.includes('anwb.nl')) return 'anwb';
+  if (url.includes('marktplaats')) return 'marktplaats';
+  if (url.includes('autowereld')) return 'autowereld';
+  if (url.includes('autoweek')) return 'autoweek';
+  if (url.includes('viabovag')) return 'viabovag';
+  
+  // Known portals to exclude from dealersite
+  const knownPortals = ['gaspedaal.nl', 'autotrack.nl', 'autoscout24.nl', 'autoscout24.be', 
+                        'anwb.nl', 'marktplaats.nl', 'autowereld.nl', 'autoweek.nl', 'viabovag.nl'];
+  const isKnownPortal = knownPortals.some(domain => url.includes(domain));
+  
+  if (!isKnownPortal && url.startsWith('http')) {
+    return 'dealersite';
+  }
+  
+  return 'other';
+}
+
 // ===== SELECT BEST DETAIL URL (prioriteer dealersite) =====
 function selectBestDetailUrl(
   gaspedaalUrl: string,
   outboundLinks: Array<{ source: string; url: string }>
-): { url: string; source: string } {
+): { url: string; source: string; score: number } {
   // Primary priority order: dealersite gets highest priority (most complete data)
-  const primaryPriority = ['dealersite', 'autotrack', 'autoscout24', 'marktplaats', 'anwb'];
+  const priorityScores: Record<string, number> = {
+    'dealersite': 100,
+    'autotrack': 80,
+    'autoscout24': 70,
+    'marktplaats': 60,
+    'anwb': 50,
+    'autowereld': 40,
+    'autoweek': 35,
+    'viabovag': 30,
+    'other': 10,
+    'gaspedaal': 5,
+  };
   
-  for (const source of primaryPriority) {
-    const link = outboundLinks.find(l => l.source === source);
-    if (link && link.url) {
-      return { url: link.url, source };
+  let bestLink = { url: gaspedaalUrl, source: 'gaspedaal', score: 5 };
+  
+  for (const link of outboundLinks) {
+    const score = priorityScores[link.source] || 10;
+    if (score > bestLink.score && link.url) {
+      bestLink = { url: link.url, source: link.source, score };
     }
   }
   
-  // Secondary priority: additional portals
-  const secondaryPriority = ['autowereld', 'autoweek', 'viabovag'];
-  
-  for (const source of secondaryPriority) {
-    const link = outboundLinks.find(l => l.source === source);
-    if (link && link.url) {
-      return { url: link.url, source };
-    }
-  }
-  
-  // Last resort: use ANY available outbound link before falling back to Gaspedaal
-  if (outboundLinks.length > 0) {
-    const anyLink = outboundLinks.find(l => l.url && l.source !== 'gaspedaal');
-    if (anyLink) {
-      console.log(`[DETAIL] Using any available link: ${anyLink.source}`);
-      return { url: anyLink.url, source: anyLink.source };
-    }
-  }
-  
-  // Ultimate fallback: Gaspedaal URL
-  return { url: gaspedaalUrl, source: 'gaspedaal' };
+  return bestLink;
 }
 
 // ===== INDEX PAGE: Build URL =====
@@ -716,14 +967,79 @@ function buildIndexPageUrl(page: number, make?: string): string {
   return `https://www.gaspedaal.nl/zoeken?${params.toString()}`;
 }
 
+// ===== GOLDEN MASTERPLAN v4: MULTI-PASS OUTBOUND EXTRACTION =====
+function extractOutboundLinks(cardHtml: string): Array<{ source: string; url: string; foundAt: string }> {
+  const outboundLinks: Array<{ source: string; url: string; foundAt: string }> = [];
+  const seenUrls = new Set<string>();
+  
+  // PASS 1: Direct anchor tags in card HTML
+  const linkPattern = /href="(https?:\/\/(?!www\.gaspedaal\.nl)[^"]+)"/gi;
+  let linkMatch;
+  while ((linkMatch = linkPattern.exec(cardHtml)) !== null) {
+    const url = linkMatch[1];
+    if (!seenUrls.has(url)) {
+      seenUrls.add(url);
+      const source = detectLinkSource(url);
+      outboundLinks.push({ source, url, foundAt: 'anchor' });
+    }
+  }
+  
+  // PASS 2: data-* attributes with URLs
+  const dataUrlPattern = /data-(?:url|href|link|redirect)="(https?:\/\/[^"]+)"/gi;
+  while ((linkMatch = dataUrlPattern.exec(cardHtml)) !== null) {
+    const url = linkMatch[1];
+    if (!url.includes('gaspedaal.nl') && !seenUrls.has(url)) {
+      seenUrls.add(url);
+      const source = detectLinkSource(url);
+      outboundLinks.push({ source, url, foundAt: 'data-attr' });
+    }
+  }
+  
+  // PASS 3: JSON embedded in card (onclick handlers, data attributes, etc)
+  const jsonUrlPattern = /"(?:url|href|link|redirect)":\s*"(https?:\/\/[^"]+)"/gi;
+  while ((linkMatch = jsonUrlPattern.exec(cardHtml)) !== null) {
+    const url = linkMatch[1];
+    if (!url.includes('gaspedaal.nl') && !seenUrls.has(url)) {
+      seenUrls.add(url);
+      const source = detectLinkSource(url);
+      outboundLinks.push({ source, url, foundAt: 'json' });
+    }
+  }
+  
+  return outboundLinks;
+}
+
+// ===== GOLDEN MASTERPLAN v4: PARSE __NEXT_DATA__ =====
+function parseNextDataListings(html: string): any[] {
+  const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if (!nextDataMatch) return [];
+  
+  try {
+    const nextData = JSON.parse(nextDataMatch[1]);
+    const props = nextData?.props?.pageProps;
+    
+    // Try different property names
+    const listings = props?.listings || props?.results || props?.cars || props?.vehicles || [];
+    
+    if (listings.length > 0) {
+      console.log(`[PARSE] Found ${listings.length} listings in __NEXT_DATA__`);
+    }
+    
+    return listings;
+  } catch (e) {
+    console.log('[PARSE] Failed to parse __NEXT_DATA__');
+    return [];
+  }
+}
+
 // ===== INDEX PAGE: Parse listing cards =====
 function parseIndexPageListings(html: string): IndexPageListing[] {
   const listings: IndexPageListing[] = [];
   
-  // NEW APPROACH: Find listing cards by the isOccTitle class (title element)
-  // Each listing has a <h2 class="isOccTitle ...">Title</h2>
-  // We split the HTML into sections around each title
+  // GOLDEN MASTERPLAN v4: Try __NEXT_DATA__ first for structured data
+  const nextDataListings = parseNextDataListings(html);
   
+  // NEW APPROACH: Find listing cards by the isOccTitle class (title element)
   const titlePattern = /<h2\s+class="isOccTitle[^"]*"[^>]*>([^<]+)<\/h2>/gi;
   const titleMatches: Array<{ title: string; index: number }> = [];
   let match;
@@ -741,7 +1057,6 @@ function parseIndexPageListings(html: string): IndexPageListing[] {
     // Fallback: try to find titles in any h2 element
     const h2Pattern = /<h2[^>]*>([^<]{10,100})<\/h2>/gi;
     while ((match = h2Pattern.exec(html)) !== null) {
-      // Filter out obvious non-listings (menu items, etc.)
       const text = match[1].trim();
       if (text.length > 15 && !text.toLowerCase().includes('aanbod') && !text.toLowerCase().includes('zoeken')) {
         titleMatches.push({
@@ -763,7 +1078,13 @@ function parseIndexPageListings(html: string): IndexPageListing[] {
     const end = Math.min(nextIndex, index + 3000);
     const cardHtml = html.substring(start, end);
     
-    const listing = extractListingFromCardHtml(cardHtml, title, i);
+    // Check if we have matching __NEXT_DATA__ for this listing
+    const nextDataListing = nextDataListings.find(nd => 
+      nd.title?.toLowerCase().includes(title.toLowerCase().substring(0, 20)) ||
+      title.toLowerCase().includes(nd.title?.toLowerCase().substring(0, 20) || '')
+    );
+    
+    const listing = extractListingFromCardHtml(cardHtml, title, i, nextDataListing);
     if (listing) {
       listings.push(listing);
     }
@@ -774,18 +1095,51 @@ function parseIndexPageListings(html: string): IndexPageListing[] {
 }
 
 // ===== INDEX PAGE: Extract listing from card HTML =====
-function extractListingFromCardHtml(cardHtml: string, title: string, listingIndex: number): IndexPageListing | null {
+function extractListingFromCardHtml(
+  cardHtml: string, 
+  title: string, 
+  listingIndex: number,
+  nextDataListing?: any
+): IndexPageListing | null {
   try {
-    // Generate a unique URL for this listing based on the title (since /occasion/ URLs are not in HTML)
-    // Format: normalize title to URL-friendly slug
-    const slug = title
-      .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, '')
-      .replace(/\s+/g, '-')
-      .substring(0, 80);
-    const url = `https://www.gaspedaal.nl/occasion/${slug}-${listingIndex}`;
+    // GOLDEN MASTERPLAN v4: Multi-pass outbound extraction
+    const outboundLinks = extractOutboundLinks(cardHtml);
+    const outboundSources = [...new Set(outboundLinks.map(l => l.source))];
     
-    // Extract price from data-testid="price" element or € symbol
+    // Add sources from "Bekijk deze auto op:" text
+    const bekijkMatch = cardHtml.match(/Bekijk deze auto op:\s*([^<]+)/i);
+    if (bekijkMatch) {
+      const sources = bekijkMatch[1].split(',').map(s => s.trim().toLowerCase());
+      for (const source of sources) {
+        const normalized = source.includes('dealersite') ? 'dealersite' :
+                          source.includes('autotrack') ? 'autotrack' :
+                          source.includes('autoscout24') ? 'autoscout24' :
+                          source.includes('anwb') ? 'anwb' :
+                          source.includes('marktplaats') ? 'marktplaats' :
+                          source.length > 2 ? source : null;
+        if (normalized && !outboundSources.includes(normalized)) {
+          outboundSources.push(normalized);
+        }
+      }
+    }
+    
+    // GOLDEN MASTERPLAN v4: Generate canonical URL based on best external link or hash
+    let canonicalUrl: string;
+    if (outboundLinks.length > 0) {
+      // Use best external URL as canonical
+      const bestLink = selectBestDetailUrl('', outboundLinks);
+      canonicalUrl = canonicalizeExternalUrl(bestLink.url);
+    } else {
+      // Fallback: hash-based identifier (stabiel)
+      const fingerprintData = `${title}|${listingIndex}`;
+      // Create a simple hash synchronously for URL generation
+      const simpleHash = title.split('').reduce((acc, char) => {
+        return ((acc << 5) - acc + char.charCodeAt(0)) | 0;
+      }, 0).toString(16).replace('-', '');
+      canonicalUrl = `gaspedaal://listing/${Math.abs(parseInt(simpleHash, 16)).toString(16).substring(0, 16)}`;
+    }
+    
+    // Extract price
     let rawPrice: string | null = null;
     const pricePatterns = [
       /data-testid="price"[^>]*>([^<]+)</i,
@@ -800,10 +1154,10 @@ function extractListingFromCardHtml(cardHtml: string, title: string, listingInde
       }
     }
     
-    // Extract year (look for 4-digit year after Bouwjaar or in span elements)
+    // Extract year
     let rawYear: string | null = null;
     const yearPatterns = [
-      />(\d{4})<\/span>/,  // Year in span
+      />(\d{4})<\/span>/,
       /Bouwjaar[^<]*?(\d{4})/i,
       /(\d{4})\s*<\/span>/,
     ];
@@ -818,18 +1172,18 @@ function extractListingFromCardHtml(cardHtml: string, title: string, listingInde
       }
     }
     
-    // Extract mileage (look for number followed by km)
+    // GOLDEN MASTERPLAN v4: Fixed mileage patterns (na HTML sanitizing)
     let rawMileage: string | null = null;
     const mileagePatterns = [
-      />(\d{1,3}(?:[.,]?\d{3})*)<[^>]*><!-- -->\s*<!-- -->km/i,
-      />(\d+)<\/span>[^<]*km/i,
-      /(\d{1,3}(?:[.,]?\d{3})*)\s*km/i,
+      />(\d{1,3}(?:\d{3})*)\s*km/i,           // >130000 km (na sanitizing)
+      />(\d{1,3}[.,]\d{3})\s*km/i,            // >130.000 km
+      /(\d{1,3}(?:[.,]?\d{3})*)\s*km/i,       // Fallback
     ];
     for (const pattern of mileagePatterns) {
       const match = cardHtml.match(pattern);
       if (match && match[1]) {
         rawMileage = match[1].replace(/[.,]/g, '');
-        break;
+        if (parseInt(rawMileage, 10) > 100) break; // Valid mileage
       }
     }
     
@@ -851,20 +1205,18 @@ function extractListingFromCardHtml(cardHtml: string, title: string, listingInde
       }
     }
     
-    // Extract power (kW)
+    // GOLDEN MASTERPLAN v4: Fixed power patterns (na HTML sanitizing)
     let powerPk: number | null = null;
     const powerPatterns = [
-      />(\d+)<[^>]*><!-- -->kW/i,
-      />(\d+)\s*kW/i,
-      /(\d+)\s*kW/i,
-      />(\d+)<[^>]*><!-- -->pk/i,
-      /(\d+)\s*pk/i,
+      />(\d+)\s*kW/i,                          // >71 kW
+      />(\d+)\s*pk/i,                          // >96 pk
+      /(\d+)\s*(?:kW|pk)/i,                    // Fallback
     ];
     for (const pattern of powerPatterns) {
       const match = cardHtml.match(pattern);
       if (match && match[1]) {
         const value = parseInt(match[1], 10);
-        if (pattern.source.includes('kW')) {
+        if (pattern.source.toLowerCase().includes('kw')) {
           powerPk = Math.round(value * 1.36); // Convert kW to pk
         } else {
           powerPk = value;
@@ -934,19 +1286,12 @@ function extractListingFromCardHtml(cardHtml: string, title: string, listingInde
     
     // Extract doors
     let doors: number | null = null;
-    const doorsMatch = cardHtml.match(/>(\d)<[^>]*><!-- -->-deurs/i) || cardHtml.match(/(\d)\s*-?\s*deurs/i);
+    const doorsMatch = cardHtml.match(/>(\d)\s*-?deurs/i) || cardHtml.match(/(\d)\s*-?\s*deurs/i);
     if (doorsMatch) {
       doors = parseInt(doorsMatch[1], 10);
     }
     
-    // Extract engine CC
-    let engineCc: number | null = null;
-    const ccMatch = cardHtml.match(/>(\d+)<[^>]*><!-- -->cc/i) || cardHtml.match(/(\d+)\s*cc/i);
-    if (ccMatch) {
-      engineCc = parseInt(ccMatch[1], 10);
-    }
-    
-    // Extract dealer info (look for pumpkin/orange colored text followed by city)
+    // Extract dealer info
     let dealerName: string | null = null;
     let dealerCity: string | null = null;
     
@@ -968,49 +1313,25 @@ function extractListingFromCardHtml(cardHtml: string, title: string, listingInde
       dealerCity = cityMatch[1].trim();
     }
     
-    // Extract outbound sources from "Bekijk deze auto op:" text
-    const outboundSources: string[] = [];
-    const outboundLinks: Array<{ source: string; url: string }> = [];
-    
-    const bekijkMatch = cardHtml.match(/Bekijk deze auto op:\s*([^<]+)/i);
-    if (bekijkMatch) {
-      const sources = bekijkMatch[1].split(',').map(s => s.trim().toLowerCase());
-      for (const source of sources) {
-        if (source.includes('dealersite')) outboundSources.push('dealersite');
-        else if (source.includes('autotrack')) outboundSources.push('autotrack');
-        else if (source.includes('autoscout24')) outboundSources.push('autoscout24');
-        else if (source.includes('anwb')) outboundSources.push('anwb');
-        else if (source.includes('marktplaats')) outboundSources.push('marktplaats');
-        else if (source.includes('autowereld')) outboundSources.push('autowereld');
-        else if (source.includes('viabovag')) outboundSources.push('viabovag');
-        else if (source.length > 2) outboundSources.push(source);
-      }
-    }
-    
-    // Look for external links in card
-    const linkPattern = /href="(https?:\/\/(?!www\.gaspedaal\.nl)[^"]+)"/gi;
-    let linkMatch;
-    while ((linkMatch = linkPattern.exec(cardHtml)) !== null) {
-      const linkUrl = linkMatch[1];
-      let source = 'other';
-      if (linkUrl.includes('autotrack')) source = 'autotrack';
-      else if (linkUrl.includes('autoscout24')) source = 'autoscout24';
-      else if (linkUrl.includes('anwb.nl')) source = 'anwb';
-      else if (linkUrl.includes('marktplaats')) source = 'marktplaats';
-      else if (linkUrl.includes('autowereld')) source = 'autowereld';
-      else source = 'dealersite';
-      
-      if (!outboundLinks.find(l => l.source === source)) {
-        outboundLinks.push({ source, url: linkUrl });
-        if (!outboundSources.includes(source)) {
-          outboundSources.push(source);
-        }
+    // GOLDEN MASTERPLAN v4: Extract thumbnail image URL
+    let imageUrlThumbnail: string | null = null;
+    const imgPatterns = [
+      /<img[^>]*src="(https:\/\/cdn\.gaspedaal\.nl\/[^"]+)"/i,
+      /<img[^>]*data-src="(https:\/\/cdn\.gaspedaal\.nl\/[^"]+)"/i,
+      /background-image:\s*url\(['"]?(https:\/\/cdn\.gaspedaal\.nl\/[^'"]+)/i,
+      /<img[^>]*src="(https:\/\/[^"]*(?:jpg|jpeg|png|webp)[^"]*)"/i,
+    ];
+    for (const pattern of imgPatterns) {
+      const match = cardHtml.match(pattern);
+      if (match) {
+        imageUrlThumbnail = match[1];
+        break;
       }
     }
     
     // Create the listing object
     const listing: IndexPageListing = {
-      url,
+      url: canonicalUrl,
       title,
       price: safeParsePrice(rawPrice),
       year: safeParseYear(rawYear),
@@ -1025,314 +1346,18 @@ function extractListingFromCardHtml(cardHtml: string, title: string, listingInde
       outboundSources,
       outboundLinks,
       powerPk,
+      imageUrlThumbnail,
       rawPrice,
       rawYear,
       rawMileage,
     };
     
     // Log parsed data for debugging
-    console.log(`[PARSE] Listing ${listingIndex}: ${title.substring(0, 40)}... | €${listing.price} | ${listing.year} | ${listing.mileage}km | ${listing.fuelType} | Dealer: ${dealerName}`);
+    console.log(`[PARSE] Listing ${listingIndex}: ${title.substring(0, 40)}... | €${listing.price} | ${listing.year} | ${listing.mileage}km | ${listing.fuelType} | ${powerPk}pk | Dealer: ${dealerName} | Links: ${outboundLinks.length}`);
     
     return listing;
   } catch (error) {
     console.error(`[PARSE] Error extracting listing: ${error}`);
-    return null;
-  }
-}
-
-// ===== INDEX PAGE: Extract single listing data =====
-function extractListingFromHtml(html: string, url: string): IndexPageListing | null {
-  try {
-    // Find the section of HTML around this URL
-    const urlPath = url.replace('https://www.gaspedaal.nl', '');
-    const urlIndex = html.indexOf(urlPath);
-    
-    if (urlIndex === -1) return null;
-    
-    // Get a window of HTML around this URL (3000 chars before and after)
-    const start = Math.max(0, urlIndex - 3000);
-    const end = Math.min(html.length, urlIndex + 3000);
-    const cardHtml = html.substring(start, end);
-    
-    // Extract title
-    let title = '';
-    const titlePatterns = [
-      /class="[^"]*title[^"]*"[^>]*>([^<]+)</i,
-      /class="[^"]*heading[^"]*"[^>]*>([^<]+)</i,
-      /<h[23][^>]*>([^<]+)</i,
-    ];
-    for (const pattern of titlePatterns) {
-      const match = cardHtml.match(pattern);
-      if (match && match[1] && match[1].length > 5) {
-        title = match[1].trim();
-        break;
-      }
-    }
-    
-    if (!title) {
-      // Try to extract from URL
-      const urlMatch = urlPath.match(/\/occasion\/([^\/]+)/);
-      if (urlMatch) {
-        title = urlMatch[1].replace(/-/g, ' ');
-      }
-    }
-    
-    if (!title) return null;
-
-    // Extract price (keep raw value for backup)
-    let rawPrice: string | null = null;
-    const pricePatterns = [
-      /€\s*([\d.,]+)/,
-      /class="[^"]*price[^"]*"[^>]*>([^<]+)</i,
-      /data-price="(\d+)"/i,
-    ];
-    for (const pattern of pricePatterns) {
-      const match = cardHtml.match(pattern);
-      if (match) {
-        rawPrice = match[1] || match[0];
-        break;
-      }
-    }
-
-    // Extract year (keep raw value for backup)
-    let rawYear: string | null = null;
-    const yearPatterns = [
-      /(\d{2}[-\/])?(\d{4})/,
-      /bouwjaar[^<]*?(\d{4})/i,
-    ];
-    for (const pattern of yearPatterns) {
-      const match = cardHtml.match(pattern);
-      if (match) {
-        rawYear = match[2] || match[1] || match[0];
-        break;
-      }
-    }
-
-    // Extract mileage (keep raw value for backup)
-    let rawMileage: string | null = null;
-    const mileagePatterns = [
-      /(\d{1,3}(?:[.,]\d{3})*)\s*km/i,
-    ];
-    for (const pattern of mileagePatterns) {
-      const match = cardHtml.match(pattern);
-      if (match) {
-        rawMileage = match[1];
-        break;
-      }
-    }
-
-    // Extract fuel type
-    let fuelType: string | null = null;
-    const fuelPatterns = [
-      /(benzine|diesel|elektrisch|hybride|plug-in|lpg|cng|waterstof)/i,
-    ];
-    for (const pattern of fuelPatterns) {
-      const match = cardHtml.match(pattern);
-      if (match) {
-        fuelType = normalizeFuelType(match[1]);
-        break;
-      }
-    }
-
-    // Extract transmission
-    let transmission: string | null = null;
-    const transPatterns = [
-      /(automaat|handgeschakeld|manueel|cvt|dsg)/i,
-    ];
-    for (const pattern of transPatterns) {
-      const match = cardHtml.match(pattern);
-      if (match) {
-        transmission = normalizeTransmission(match[1]);
-        break;
-      }
-    }
-
-    // Extract body type
-    let bodyType: string | null = null;
-    const bodyPatterns = [
-      /(hatchback|sedan|suv|stationwagon|stationwagen|mpv|cabrio|coup[eé]|terreinwagen)/i,
-    ];
-    for (const pattern of bodyPatterns) {
-      const match = cardHtml.match(pattern);
-      if (match) {
-        bodyType = normalizeBodyType(match[1]);
-        break;
-      }
-    }
-
-    // Extract color
-    let color: string | null = null;
-    const colorPatterns = [
-      /kleur[^<]*?([a-zë]+)/i,
-      /(zwart|wit|grijs|zilver|blauw|rood|groen|geel|oranje|bruin|beige|paars)/i,
-    ];
-    for (const pattern of colorPatterns) {
-      const match = cardHtml.match(pattern);
-      if (match && match[1]) {
-        color = match[1].toLowerCase();
-        break;
-      }
-    }
-
-    // Extract doors
-    let rawDoors: string | null = null;
-    const doorsMatch = cardHtml.match(/(\d)\s*-?\s*deurs/i);
-    if (doorsMatch) {
-      rawDoors = doorsMatch[1];
-    }
-
-    // Extract dealer info
-    let dealerName: string | null = null;
-    let dealerCity: string | null = null;
-    
-    const dealerPatterns = [
-      /class="[^"]*dealer[^"]*"[^>]*>([^<]+)</i,
-      /verkoper[^<]*?([^<]+)</i,
-    ];
-    for (const pattern of dealerPatterns) {
-      const match = cardHtml.match(pattern);
-      if (match && match[1] && match[1].length > 2) {
-        dealerName = match[1].trim();
-        break;
-      }
-    }
-
-    const cityPatterns = [
-      /\(([A-Z]{2})\)/,  // Match province codes like (GE), (NH)
-      /([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s*\([A-Z]{2}\)/,  // City with province
-    ];
-    for (const pattern of cityPatterns) {
-      const match = cardHtml.match(pattern);
-      if (match && match[1]) {
-        dealerCity = match[1].length === 2 ? null : match[1].trim();
-        break;
-      }
-    }
-
-    // Extract outbound sources and links (portals where listing appears)
-    const outboundSources: string[] = [];
-    const outboundLinks: Array<{ source: string; url: string }> = [];
-    
-    // Known portal domains to exclude when finding dealersite
-    const knownPortalDomains = [
-      'gaspedaal.nl',
-      'autotrack.nl',
-      'autoscout24.nl',
-      'autoscout24.be',
-      'anwb.nl',
-      'marktplaats.nl',
-      'autowereld.nl',
-      'autoweek.nl',
-      'viabovag.nl',
-    ];
-    
-    // Helper to check if URL is a known portal
-    const isKnownPortal = (url: string): boolean => {
-      return knownPortalDomains.some(domain => url.includes(domain));
-    };
-    
-    // Look for ALL external links in the card
-    const allLinkPattern = /href="(https?:\/\/[^"]+)"/gi;
-    let linkMatch;
-    
-    while ((linkMatch = allLinkPattern.exec(cardHtml)) !== null) {
-      const linkUrl = linkMatch[1];
-      
-      // Skip internal gaspedaal links (occasion pages, etc.)
-      if (linkUrl.includes('gaspedaal.nl/occasion') || linkUrl.includes('gaspedaal.nl/zoeken')) {
-        continue;
-      }
-      
-      // Determine source type
-      let source = 'other';
-      if (linkUrl.includes('autotrack')) {
-        source = 'autotrack';
-      } else if (linkUrl.includes('autoscout24')) {
-        source = 'autoscout24';
-      } else if (linkUrl.includes('anwb.nl')) {
-        source = 'anwb';
-      } else if (linkUrl.includes('marktplaats')) {
-        source = 'marktplaats';
-      } else if (linkUrl.includes('autowereld')) {
-        source = 'autowereld';
-      } else if (linkUrl.includes('autoweek')) {
-        source = 'autoweek';
-      } else if (linkUrl.includes('viabovag')) {
-        source = 'viabovag';
-      } else if (!isKnownPortal(linkUrl)) {
-        // External link that's NOT a known portal = dealersite!
-        source = 'dealersite';
-      }
-      
-      // Add ALL external links (no 'unknown' skip anymore)
-      if (!outboundSources.includes(source)) {
-        outboundSources.push(source);
-        outboundLinks.push({ source, url: linkUrl });
-      }
-    }
-    
-    // Also look for "dealersite" or "website" button/link patterns
-    const dealersiteLinkPatterns = [
-      /href="([^"]+)"[^>]*>[^<]*(?:dealersite|website|dealer)[^<]*<\/a>/gi,
-      /data-dealer-url="([^"]+)"/gi,
-      /class="[^"]*dealer[^"]*"[^>]*href="([^"]+)"/gi,
-    ];
-    
-    for (const pattern of dealersiteLinkPatterns) {
-      let dsMatch;
-      while ((dsMatch = pattern.exec(cardHtml)) !== null) {
-        const dsUrl = dsMatch[1];
-        // Make sure it's a full URL and not a known portal
-        if (dsUrl.startsWith('http') && !isKnownPortal(dsUrl)) {
-          if (!outboundSources.includes('dealersite')) {
-            outboundSources.push('dealersite');
-            outboundLinks.push({ source: 'dealersite', url: dsUrl });
-          }
-        }
-      }
-    }
-    
-    // Also check for portal names without links (for source tracking)
-    const portalMatch = cardHtml.match(/(?:Dealersite|AutoTrack|ANWB|AutoScout24|Marktplaats)/gi);
-    if (portalMatch) {
-      for (const portal of portalMatch) {
-        const normalized = portal.toLowerCase();
-        if (!outboundSources.includes(normalized)) {
-          outboundSources.push(normalized);
-        }
-      }
-    }
-
-    // Extract power
-    let rawPower: string | null = null;
-    const powerMatch = cardHtml.match(/(\d+)\s*(?:pk|kw)/i);
-    if (powerMatch) {
-      rawPower = powerMatch[0];
-    }
-
-    return {
-      url,
-      title,
-      price: safeParsePrice(rawPrice),
-      year: safeParseYear(rawYear),
-      mileage: safeParseMileage(rawMileage),
-      fuelType,
-      transmission,
-      bodyType,
-      color,
-      doors: safeParseDoors(rawDoors),
-      dealerName,
-      dealerCity,
-      outboundSources,
-      outboundLinks,
-      powerPk: safeParsePower(rawPower),
-      // Keep raw values for backup
-      rawPrice,
-      rawYear,
-      rawMileage,
-    };
-  } catch (error) {
-    console.error(`[PARSE] Error extracting listing from HTML:`, error);
     return null;
   }
 }
@@ -1373,7 +1398,6 @@ function extractDetailPageData(html: string): DetailPageData {
   let optionsRawList: string[] = [];
   let optionsRawHtml: string | null = null;
   
-  // Find options section (multiple patterns)
   const optionsSectionPatterns = [
     /uitrusting[^<]*?<[^>]*>([\s\S]*?)<\/(?:div|section|ul)>/i,
     /opties[^<]*?<[^>]*>([\s\S]*?)<\/(?:div|section|ul)>/i,
@@ -1385,21 +1409,17 @@ function extractDetailPageData(html: string): DetailPageData {
     const match = html.match(pattern);
     if (match && match[1] && match[1].length > 20) {
       optionsRawHtml = match[1];
-      
-      // Extract text without HTML tags
       optionsRawText = match[1]
         .replace(/<[^>]+>/g, '\n')
         .replace(/\s+/g, ' ')
         .trim();
       
-      // Extract individual options as list
       const listItems = match[1].match(/<li[^>]*>([^<]+)<\/li>/gi);
       if (listItems) {
         optionsRawList = listItems.map(item => 
           item.replace(/<[^>]+>/g, '').trim()
         ).filter(item => item.length > 0);
       } else {
-        // Try splitting by common separators
         optionsRawList = optionsRawText
           .split(/[,\n•·▪►]/)
           .map(s => s.trim())
@@ -1431,10 +1451,9 @@ function extractDetailPageData(html: string): DetailPageData {
   }
   console.log(`[DETAIL] Description: ${descriptionRaw ? descriptionRaw.length + ' chars' : 'NOT FOUND'}`);
 
-  // ===== SPECS TABLE: ALLE KEY/VALUE PAIRS OPSLAAN =====
+  // ===== SPECS TABLE =====
   const specsTableRaw: Record<string, string> = {};
   
-  // Pattern 1: Table rows
   const tableRowPattern = /<tr[^>]*>[\s\S]*?<t[hd][^>]*>([^<]+)<\/t[hd]>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<\/tr>/gi;
   let tableMatch;
   while ((tableMatch = tableRowPattern.exec(html)) !== null) {
@@ -1445,7 +1464,6 @@ function extractDetailPageData(html: string): DetailPageData {
     }
   }
   
-  // Pattern 2: Definition lists
   const dlPattern = /<dt[^>]*>([^<]+)<\/dt>[\s\S]*?<dd[^>]*>([^<]+)<\/dd>/gi;
   while ((tableMatch = dlPattern.exec(html)) !== null) {
     const key = tableMatch[1].trim();
@@ -1455,19 +1473,9 @@ function extractDetailPageData(html: string): DetailPageData {
     }
   }
   
-  // Pattern 3: Spec divs with label/value
-  const specDivPattern = /class="[^"]*(?:spec|kenmerk)[^"]*"[^>]*>[\s\S]*?<[^>]*class="[^"]*label[^"]*"[^>]*>([^<]+)<[\s\S]*?<[^>]*class="[^"]*value[^"]*"[^>]*>([^<]+)</gi;
-  while ((tableMatch = specDivPattern.exec(html)) !== null) {
-    const key = tableMatch[1].trim();
-    const value = tableMatch[2].trim();
-    if (key && value && key.length < 50 && value.length < 200) {
-      specsTableRaw[key] = value;
-    }
-  }
-  
   console.log(`[DETAIL] Specs table: ${Object.keys(specsTableRaw).length} key/value pairs`);
 
-  // ===== ENGINE/EV SPECS EXTRAHEREN =====
+  // ===== ENGINE/EV SPECS =====
   let engineCc: number | null = null;
   let batteryCapacityKwh: number | null = null;
   let electricRangeKm: number | null = null;
@@ -1479,13 +1487,11 @@ function extractDetailPageData(html: string): DetailPageData {
     /(\d{3,4})\s*cc/i,
     /(\d[.,]\d)\s*(?:liter|l)/i,
     /cilinderinhoud[^<]*?(\d{3,4})/i,
-    /motorinhoud[^<]*?(\d{3,4})/i,
   ];
   for (const pattern of ccPatterns) {
     const match = html.match(pattern);
     if (match) {
       let value = match[1];
-      // Convert "2.0" liter to 2000cc
       if (value.includes('.') || value.includes(',')) {
         value = String(Math.round(parseFloat(value.replace(',', '.')) * 1000));
       }
@@ -1494,7 +1500,7 @@ function extractDetailPageData(html: string): DetailPageData {
     }
   }
   
-  // Battery capacity (kWh)
+  // Battery capacity
   const kwhPatterns = [
     /(\d+(?:[.,]\d+)?)\s*kwh/i,
     /accucapaciteit[^<]*?(\d+(?:[.,]\d+)?)/i,
@@ -1508,7 +1514,7 @@ function extractDetailPageData(html: string): DetailPageData {
     }
   }
   
-  // Electric range (km)
+  // Electric range
   const rangePatterns = [
     /actieradius[^<]*?(\d+)\s*km/i,
     /bereik[^<]*?(\d+)\s*km/i,
@@ -1552,7 +1558,6 @@ function extractDetailPageData(html: string): DetailPageData {
   let imageUrlMain: string | null = null;
   let imageCount = 0;
   
-  // Main image
   const mainImagePatterns = [
     /class="[^"]*(?:main|primary|hero)[^"]*"[^>]*src="([^"]+)"/i,
     /<img[^>]*class="[^"]*(?:gallery|slider)[^"]*"[^>]*src="([^"]+)"/i,
@@ -1566,7 +1571,6 @@ function extractDetailPageData(html: string): DetailPageData {
     }
   }
   
-  // Count all images
   const allImages = html.match(/src="[^"]*(?:jpg|jpeg|png|webp)[^"]*"/gi);
   if (allImages) {
     imageCount = allImages.length;
@@ -1650,7 +1654,7 @@ function extractMakeModel(title: string): { make: string | null; model: string |
     'Nissan', 'Hyundai', 'Kia', 'Volvo', 'Skoda', 'Škoda', 'Seat', 'SEAT', 'MINI', 
     'Porsche', 'Land Rover', 'Jaguar', 'Tesla', 'Lexus', 'Alfa Romeo', 'Jeep', 
     'Suzuki', 'Mitsubishi', 'Dacia', 'Smart', 'Chevrolet', 'DS', 'Cupra', 
-    'Polestar', 'Genesis', 'MG', 'BYD', 'Lynk & Co', 'NIO', 'XPeng'
+    'Polestar', 'Genesis', 'MG', 'BYD', 'Lynk & Co', 'Lynk&Co', 'NIO', 'XPeng'
   ];
 
   const titleLower = title.toLowerCase();
@@ -1668,6 +1672,7 @@ function extractMakeModel(title: string): { make: string | null; model: string |
       if (make === 'Škoda') normalizedMake = 'Skoda';
       if (make === 'SEAT') normalizedMake = 'Seat';
       if (make === 'Citroen') normalizedMake = 'Citroën';
+      if (make === 'Lynk&Co') normalizedMake = 'Lynk & Co';
       
       return { make: normalizedMake, model };
     }
@@ -1711,71 +1716,109 @@ async function logVehicleEvent(
   }
 }
 
-// ===== LOOKUP EXISTING LISTING: HARD IDENTITY ONLY =====
+// ===== GOLDEN MASTERPLAN v4: LOOKUP EXISTING LISTING (DEALER-SCOPED) =====
 async function lookupExistingListing(
   supabase: any,
   listing: IndexPageListing,
-  detailData: DetailPageData | null
+  detailData: DetailPageData | null,
+  dealerKey: string,
+  dealerKeyConfidence: DealerKeyConfidence
 ): Promise<{ existingListing: any | null; matchType: string | null }> {
-  const canonicalUrl = canonicalizeGaspedaalUrl(listing.url);
   
-  // 1. Primary lookup: canonical URL
-  const { data: byCanonicalUrl } = await supabase
-    .from('listings')
-    .select('id, status, price, mileage, content_hash, first_seen_at, gone_detected_at, license_plate_hash, vehicle_fingerprint, raw_listing_id, detail_status, detail_attempts, detail_scraped_at, canonical_url, vin_hash')
-    .eq('canonical_url', canonicalUrl)
-    .maybeSingle();
-  
-  if (byCanonicalUrl) {
-    return { existingListing: byCanonicalUrl, matchType: 'canonical_url' };
-  }
-  
-  // 2. Fallback: original URL (for backwards compatibility)
-  const { data: byUrl } = await supabase
-    .from('listings')
-    .select('id, status, price, mileage, content_hash, first_seen_at, gone_detected_at, license_plate_hash, vehicle_fingerprint, raw_listing_id, detail_status, detail_attempts, detail_scraped_at, canonical_url, vin_hash')
-    .eq('url', listing.url)
-    .maybeSingle();
-  
-  if (byUrl) {
-    return { existingListing: byUrl, matchType: 'url' };
-  }
-  
-  // 3. Secondary lookup: license_plate_hash (only if detail data has plate)
+  // 1. HARD MATCH: license_plate_hash (als detail data beschikbaar)
   if (detailData?.licensePlate) {
     const plateHash = await hashLicensePlate(detailData.licensePlate);
     if (plateHash) {
       const { data: byPlate } = await supabase
         .from('listings')
-        .select('id, status, price, mileage, content_hash, first_seen_at, gone_detected_at, license_plate_hash, vehicle_fingerprint, raw_listing_id, detail_status, detail_attempts, detail_scraped_at, canonical_url, url, vin_hash')
+        .select('*')
         .eq('license_plate_hash', plateHash)
         .maybeSingle();
-      
       if (byPlate) {
-        console.log(`[DEDUP] Found existing listing by license_plate_hash: ${byPlate.id} (old URL: ${byPlate.url?.substring(0, 50)}...)`);
+        console.log(`[DEDUP] HARD MATCH: license_plate_hash -> ${byPlate.id}`);
         return { existingListing: byPlate, matchType: 'license_plate_hash' };
       }
     }
   }
   
-  // 4. Tertiary lookup: vin_hash (only if detail data has VIN)
+  // 2. HARD MATCH: vin_hash
   if (detailData?.vin) {
     const vinHash = await hashVin(detailData.vin);
     if (vinHash) {
       const { data: byVin } = await supabase
         .from('listings')
-        .select('id, status, price, mileage, content_hash, first_seen_at, gone_detected_at, license_plate_hash, vehicle_fingerprint, raw_listing_id, detail_status, detail_attempts, detail_scraped_at, canonical_url, url, vin_hash')
+        .select('*')
         .eq('vin_hash', vinHash)
         .maybeSingle();
-      
       if (byVin) {
-        console.log(`[DEDUP] Found existing listing by vin_hash: ${byVin.id}`);
+        console.log(`[DEDUP] HARD MATCH: vin_hash -> ${byVin.id}`);
         return { existingListing: byVin, matchType: 'vin_hash' };
       }
     }
   }
   
-  // NO SOFT MATCHING - if no hard ID match, it's a new listing
+  // 3. HARD MATCH: external_canonical_url_hash
+  if (listing.outboundLinks.length > 0) {
+    const bestLink = selectBestDetailUrl('', listing.outboundLinks);
+    const extUrlHash = await hashExternalUrl(bestLink.url);
+    if (extUrlHash) {
+      const { data: byExtUrl } = await supabase
+        .from('listings')
+        .select('*')
+        .eq('external_canonical_url_hash', extUrlHash)
+        .maybeSingle();
+      if (byExtUrl) {
+        console.log(`[DEDUP] HARD MATCH: external_canonical_url_hash -> ${byExtUrl.id}`);
+        return { existingListing: byExtUrl, matchType: 'external_url_hash' };
+      }
+    }
+  }
+  
+  // 4. HARD MATCH: canonical_url (backwards compatibility)
+  if (!listing.url.startsWith('gaspedaal://')) {
+    const { data: byCanonical } = await supabase
+      .from('listings')
+      .select('*')
+      .eq('canonical_url', listing.url)
+      .maybeSingle();
+    if (byCanonical) {
+      console.log(`[DEDUP] HARD MATCH: canonical_url -> ${byCanonical.id}`);
+      return { existingListing: byCanonical, matchType: 'canonical_url' };
+    }
+  }
+  
+  // 5. SOFT MATCH: fingerprint_hash_v2 (ALLEEN als dealer_key_confidence != LOW)
+  if (dealerKeyConfidence !== 'LOW') {
+    const { make, model } = extractMakeModel(listing.title);
+    const fingerprintV2 = await generateVehicleFingerprintV2(dealerKey, {
+      make,
+      model,
+      year: listing.year,
+      fuelType: listing.fuelType,
+      transmission: listing.transmission,
+      bodyType: listing.bodyType,
+      mileage: listing.mileage,
+      powerPk: listing.powerPk,
+      imageUrl: listing.imageUrlThumbnail,
+    });
+    
+    // DEALER-SCOPED query - alleen binnen dezelfde dealer
+    const { data: byFingerprint } = await supabase
+      .from('listings')
+      .select('*')
+      .eq('fingerprint_hash_v2', fingerprintV2)
+      .eq('dealer_key', dealerKey)
+      .maybeSingle();
+    
+    if (byFingerprint) {
+      console.log(`[DEDUP] SOFT MATCH: fingerprint_v2 (dealer: ${dealerKey}) -> ${byFingerprint.id}`);
+      return { existingListing: byFingerprint, matchType: 'fingerprint_v2' };
+    }
+  } else {
+    console.log(`[DEDUP] Soft matching DISABLED: dealer_key_confidence = LOW`);
+  }
+  
+  // 6. NO MATCH - nieuwe listing
   return { existingListing: null, matchType: null };
 }
 
@@ -1796,7 +1839,7 @@ async function processHealingQueue(
   // Find incomplete listings that need re-scraping
   const { data: healingCandidates, error } = await supabase
     .from('listings')
-    .select('id, url, canonical_url, outbound_links, detail_attempts, detail_scraped_at, detail_status, chosen_detail_source')
+    .select('id, url, canonical_url, outbound_links, detail_attempts, detail_scraped_at, detail_status, chosen_detail_source, detail_sources_tried, detail_best_score')
     .eq('needs_detail_rescrape', true)
     .lt('detail_attempts', HEALING_MAX_RETRIES)
     .or(`detail_scraped_at.is.null,detail_scraped_at.lt.${minTimeSinceLastAttempt}`)
@@ -1810,7 +1853,6 @@ async function processHealingQueue(
   console.log(`[HEALING] Found ${healingCandidates?.length || 0} candidates for healing`);
   
   for (const candidate of (healingCandidates || [])) {
-    // Check safety limits
     const safetyCheck = checkSafetyLimits(safety, safetyConfig);
     if (safetyCheck.shouldStop) {
       console.log(`[HEALING] Stopping: ${safetyCheck.reason}`);
@@ -1819,22 +1861,56 @@ async function processHealingQueue(
     
     console.log(`[HEALING] Processing listing ${candidate.id} (attempt ${candidate.detail_attempts + 1}/${HEALING_MAX_RETRIES})`);
     
-    // Select best URL for detail scrape
     const outboundLinks = candidate.outbound_links || [];
-    const bestUrl = selectBestDetailUrl(candidate.url, outboundLinks);
+    
+    // GOLDEN MASTERPLAN v4: Check for untried better sources
+    const triedSources = (candidate.detail_sources_tried || []).map((s: any) => s.source);
+    const availableSources = outboundLinks.map((l: any) => l.source);
+    
+    // Find best untried source
+    const priorityOrder = ['dealersite', 'autotrack', 'autoscout24', 'marktplaats', 'anwb'];
+    let bestUntried = outboundLinks.find((l: any) => 
+      !triedSources.includes(l.source) && priorityOrder.includes(l.source)
+    );
+    
+    if (!bestUntried && outboundLinks.length > 0) {
+      bestUntried = outboundLinks[0];
+    }
+    
+    if (!bestUntried) {
+      console.log(`[HEALING] No untried sources for ${candidate.id}, marking as no_links`);
+      await supabase
+        .from('listings')
+        .update({
+          detail_status: 'no_links',
+          needs_detail_rescrape: false,
+        })
+        .eq('id', candidate.id);
+      stats.detailNoLinks++;
+      continue;
+    }
     
     // Scrape detail page
-    const detailHtml = await scrapeWithFirecrawl(bestUrl.url, firecrawlKey, safety, false, dryRun);
+    const detailHtml = await scrapeWithFirecrawl(bestUntried.url, firecrawlKey, safety, false, dryRun);
     stats.detailAttempted++;
     
     if (!detailHtml) {
-      // Failed to scrape - update attempts and error
+      // Track failed attempt
+      const newSourcesTried = [...(candidate.detail_sources_tried || []), {
+        source: bestUntried.source,
+        url: bestUntried.url,
+        attemptedAt: new Date().toISOString(),
+        score: 0,
+        success: false,
+      }];
+      
       await supabase
         .from('listings')
         .update({
           detail_attempts: candidate.detail_attempts + 1,
-          last_detail_error: `Failed to scrape ${bestUrl.source}: No HTML returned`,
+          last_detail_error: `Failed to scrape ${bestUntried.source}: No HTML returned`,
           detail_scraped_at: new Date().toISOString(),
+          detail_sources_tried: newSourcesTried,
         })
         .eq('id', candidate.id);
       stats.detailFailed++;
@@ -1846,18 +1922,31 @@ async function processHealingQueue(
     const detailData = extractDetailPageData(detailHtml);
     const completeness = calculateCompletenessScore(detailData, {} as IndexPageListing);
     
-    // Update listing with new detail data
+    // Track source attempt
+    const newSourcesTried = [...(candidate.detail_sources_tried || []), {
+      source: bestUntried.source,
+      url: bestUntried.url,
+      attemptedAt: new Date().toISOString(),
+      score: completeness.score,
+      success: completeness.status === 'ok' || completeness.status === 'partial',
+    }];
+    
+    const newBestScore = Math.max(candidate.detail_best_score || 0, completeness.score);
+    
+    // Update listing
     const updateData: Record<string, any> = {
       detail_attempts: candidate.detail_attempts + 1,
       detail_scraped_at: new Date().toISOString(),
       detail_status: completeness.status,
       detail_completeness_score: completeness.score,
-      chosen_detail_source: bestUrl.source,
-      chosen_detail_url: bestUrl.url,
+      chosen_detail_source: bestUntried.source,
+      chosen_detail_url: bestUntried.url,
       needs_detail_rescrape: completeness.status !== 'ok',
       last_detail_error: completeness.status !== 'ok' 
         ? `Missing fields: ${completeness.missingFields.join(', ')}` 
         : null,
+      detail_sources_tried: newSourcesTried,
+      detail_best_score: newBestScore,
     };
     
     // Add extracted data
@@ -1872,12 +1961,9 @@ async function processHealingQueue(
       updateData.image_url_main = detailData.imageUrlMain;
       updateData.image_count = detailData.imageCount;
       
-      // Update license plate hash if found
       if (detailData.licensePlate) {
         updateData.license_plate_hash = await hashLicensePlate(detailData.licensePlate);
       }
-      
-      // Update VIN hash if found
       if (detailData.vin) {
         updateData.vin_hash = await hashVin(detailData.vin);
       }
@@ -1895,7 +1981,6 @@ async function processHealingQueue(
     else if (completeness.status === 'partial') stats.detailPartial++;
     else stats.detailFailed++;
     
-    // Track missing fields
     for (const field of completeness.missingFields) {
       stats.missingFieldsCounts[field] = (stats.missingFieldsCounts[field] || 0) + 1;
     }
@@ -1923,7 +2008,6 @@ async function runDiscoveryMode(
   console.log(`[DISCOVERY] Starting discovery mode (maxPages=${maxPages}, dryRun=${dryRun}, indexOnly=${indexOnly})`);
   
   for (let page = 1; page <= maxPages; page++) {
-    // Check safety limits
     const safetyCheck = checkSafetyLimits(safety, safetyConfig);
     if (safetyCheck.shouldStop) {
       console.log(`[SAFETY] Stop: ${safetyCheck.reason}`);
@@ -1949,7 +2033,6 @@ async function runDiscoveryMode(
 
     stats.pagesProcessed++;
     
-    // In dry run mode with simulated HTML, we can't parse real listings
     if (dryRun) {
       console.log(`[DRY RUN] Page ${page}: Would parse listings from ${indexUrl}`);
       stats.listingsFound += 20;
@@ -1980,22 +2063,32 @@ async function runDiscoveryMode(
         }
       }
 
-      // Pre-filter: year >= 2014 and price >= 2000
-      if (listing.year !== null && listing.year < MIN_YEAR) {
-        continue;
-      }
-      if (listing.price !== null && listing.price < MIN_PRICE) {
-        continue;
-      }
+      // Pre-filter
+      if (listing.year !== null && listing.year < MIN_YEAR) continue;
+      if (listing.price !== null && listing.price < MIN_PRICE) continue;
 
-      // Generate content hash and canonical URL
+      // Generate content hash
       const contentHash = await createContentHash(listing);
-      const canonicalUrl = canonicalizeGaspedaalUrl(listing.url);
+      
+      // GOLDEN MASTERPLAN v4: Extract dealer key
+      const { dealerKey, confidence: dealerKeyConfidence } = extractDealerKey(listing.outboundLinks, listing.dealerName);
+      console.log(`[DEALER] Key: ${dealerKey}, Confidence: ${dealerKeyConfidence}`);
+      
+      // GOLDEN MASTERPLAN v4: Generate canonical URL
+      let canonicalUrl: string;
+      if (listing.outboundLinks.length > 0) {
+        const bestLink = selectBestDetailUrl('', listing.outboundLinks);
+        canonicalUrl = canonicalizeExternalUrl(bestLink.url);
+      } else {
+        // Hash-based fallback
+        const hashInput = `${dealerKey}|${listing.title}|${listing.year}|${listing.mileage}`;
+        const hash = await createHash(hashInput);
+        canonicalUrl = `gaspedaal://listing/${hash.substring(0, 16)}`;
+      }
       
       const { make, model } = extractMakeModel(listing.title);
       const fingerprint = generateVehicleFingerprint({
-        make,
-        model,
+        make, model,
         year: listing.year,
         fuelType: listing.fuelType,
         bodyType: listing.bodyType,
@@ -2011,50 +2104,63 @@ async function runDiscoveryMode(
       let detailHtml: string | null = null;
       let chosenDetailSource: string | null = null;
       let chosenDetailUrl: string | null = null;
+      let detailStatus: DetailStatus = 'pending';
       
       // First, do a preliminary lookup without detail data
-      const { existingListing: preliminaryLookup, matchType: preliminaryMatchType } = await lookupExistingListing(supabase, listing, null);
+      const { existingListing: preliminaryLookup, matchType: preliminaryMatchType } = await lookupExistingListing(
+        supabase, listing, null, dealerKey, dealerKeyConfidence
+      );
       const isNewListing = !preliminaryLookup;
       
+      // GOLDEN MASTERPLAN v4: DETAIL SCRAPE DECISION
       if (indexOnly) {
-        // INDEX ONLY MODE: Skip detail page scraping
         if (isNewListing) {
           stats.skippedIndexOnly++;
-          console.log(`[INDEX ONLY] Skipping detail page for new listing: ${listing.url}`);
+          console.log(`[INDEX ONLY] Skipping detail page for new listing`);
         }
       } else if (isNewListing) {
-        // NEW LISTING: Scrape detail page - prioritize dealersite if available
-        const budgetCheck = checkSafetyLimits(safety, safetyConfig);
-        if (!budgetCheck.shouldStop) {
-          // Select best URL: dealersite > autotrack > autoscout24 > marktplaats > anwb > gaspedaal
-          const bestUrl = selectBestDetailUrl(listing.url, listing.outboundLinks);
-          chosenDetailSource = bestUrl.source;
-          chosenDetailUrl = bestUrl.url;
-          console.log(`[DETAIL] Selected source: ${bestUrl.source} -> ${bestUrl.url.substring(0, 80)}...`);
-          
-          stats.detailAttempted++;
-          detailHtml = await scrapeWithFirecrawl(bestUrl.url, firecrawlKey, safety, false, dryRun);
-          if (detailHtml) {
-            detailData = extractDetailPageData(detailHtml);
-            console.log(`[DETAIL] Extracted ${detailData.optionsRawList?.length || 0} options from ${bestUrl.source}`);
-          } else if (bestUrl.source !== 'gaspedaal') {
-            // Fallback to Gaspedaal if dealersite/portal scrape failed
-            console.log(`[DETAIL] ${bestUrl.source} failed, falling back to Gaspedaal...`);
-            chosenDetailSource = 'gaspedaal';
-            chosenDetailUrl = listing.url;
-            detailHtml = await scrapeWithFirecrawl(listing.url, firecrawlKey, safety, false, dryRun);
+        // NEW LISTING - check if we have outbound links
+        if (listing.outboundLinks.length > 0) {
+          const budgetCheck = checkSafetyLimits(safety, safetyConfig);
+          if (!budgetCheck.shouldStop) {
+            const bestUrl = selectBestDetailUrl('', listing.outboundLinks);
+            chosenDetailSource = bestUrl.source;
+            chosenDetailUrl = bestUrl.url;
+            console.log(`[DETAIL] FIRST SEEN: Will scrape ${bestUrl.source} -> ${bestUrl.url.substring(0, 80)}...`);
+            
+            stats.detailAttempted++;
+            detailHtml = await scrapeWithFirecrawl(bestUrl.url, firecrawlKey, safety, false, dryRun);
             if (detailHtml) {
               detailData = extractDetailPageData(detailHtml);
+              console.log(`[DETAIL] Extracted ${detailData.optionsRawList?.length || 0} options from ${bestUrl.source}`);
+            } else if (bestUrl.source !== 'gaspedaal') {
+              // Fallback
+              console.log(`[DETAIL] ${bestUrl.source} failed, trying Gaspedaal fallback...`);
+              chosenDetailSource = 'gaspedaal';
+              chosenDetailUrl = listing.url;
             }
+            await delay(DELAY_BETWEEN_REQUESTS_MS);
           }
-          await delay(DELAY_BETWEEN_REQUESTS_MS);
+        } else {
+          // NO EXTERNAL LINKS
+          detailStatus = 'no_links';
+          stats.detailNoLinks++;
+          console.log(`[DETAIL] NO LINKS: Marking as no_links`);
+        }
+      } else {
+        // EXISTING LISTING - check if detail already done
+        if (['ok', 'partial', 'no_links'].includes(preliminaryLookup.detail_status)) {
+          detailStatus = 'skipped_existing';
+          console.log(`[DETAIL] SKIP: Already scraped (${preliminaryLookup.detail_status})`);
         }
       }
 
       // Now do final lookup with detail data (might find by plate/VIN)
-      const { existingListing, matchType } = await lookupExistingListing(supabase, listing, detailData);
+      const { existingListing, matchType } = await lookupExistingListing(
+        supabase, listing, detailData, dealerKey, dealerKeyConfidence
+      );
 
-      // ===== SAVE TO raw_listings (ALWAYS - with or without detail) =====
+      // ===== SAVE TO raw_listings =====
       const rawListingId = await saveRawListing(
         supabase, 
         listing, 
@@ -2064,36 +2170,54 @@ async function runDiscoveryMode(
         stats,
         safety,
         chosenDetailSource,
-        chosenDetailUrl
+        chosenDetailUrl,
+        canonicalUrl
       );
       
       if (!rawListingId) {
-        console.error(`[ERROR] Failed to save raw listing for ${listing.url}`);
+        console.error(`[ERROR] Failed to save raw listing`);
         safety.failedParses++;
         continue;
       }
       
-      console.log(`[RAW] Saved raw listing ${rawListingId} for ${listing.url}`);
+      console.log(`[RAW] Saved raw listing ${rawListingId}`);
 
-      // Calculate completeness score if detail data was scraped
-      let completeness: CompletenessResult = { score: 0, status: 'pending', missingFields: [] };
+      // Calculate completeness score
+      let completeness: CompletenessResult = { score: 0, status: detailStatus, missingFields: [] };
       if (detailData) {
         completeness = calculateCompletenessScore(detailData, listing);
         stats.completenessScores.push(completeness.score);
         
-        // Track missing fields
         for (const field of completeness.missingFields) {
           stats.missingFieldsCounts[field] = (stats.missingFieldsCounts[field] || 0) + 1;
         }
         
-        // Update detail stats
         if (completeness.status === 'ok') stats.detailOk++;
         else if (completeness.status === 'partial') stats.detailPartial++;
         else if (completeness.status === 'failed') stats.detailFailed++;
       }
 
+      // GOLDEN MASTERPLAN v4: Generate fingerprint v2
+      const fingerprintV2 = await generateVehicleFingerprintV2(dealerKey, {
+        make, model,
+        year: listing.year,
+        fuelType: listing.fuelType,
+        transmission: listing.transmission,
+        bodyType: listing.bodyType,
+        mileage: listing.mileage,
+        powerPk: listing.powerPk,
+        imageUrl: listing.imageUrlThumbnail,
+      });
+      
+      // GOLDEN MASTERPLAN v4: Generate external URL hash
+      let externalUrlHash: string | null = null;
+      if (listing.outboundLinks.length > 0) {
+        const bestLink = selectBestDetailUrl('', listing.outboundLinks);
+        externalUrlHash = await hashExternalUrl(bestLink.url);
+      }
+
       if (!existingListing) {
-        // TRULY NEW LISTING - no hard ID match found
+        // TRULY NEW LISTING
         const licensePlateHash = detailData?.licensePlate 
           ? await hashLicensePlate(detailData.licensePlate) 
           : null;
@@ -2101,9 +2225,17 @@ async function runDiscoveryMode(
           ? await hashVin(detailData.vin)
           : null;
 
-        // Calculate buckets
         const priceBucket = listing.price ? Math.floor(listing.price / 5000) * 5000 : null;
         const mileageBucket = listing.mileage ? Math.floor(listing.mileage / 5000) * 5000 : null;
+        
+        // Determine readiness
+        const { listingReady, taxationReady } = determineReadiness(
+          { make, model, year: listing.year, price: listing.price, fuel_type: listing.fuelType,
+            mileage: listing.mileage, transmission: listing.transmission, body_type: listing.bodyType },
+          dealerKeyConfidence,
+          detailData ? completeness.status : detailStatus,
+          completeness.score
+        );
 
         // Insert new listing with ALL data
         const insertData: Record<string, any> = {
@@ -2137,16 +2269,32 @@ async function runDiscoveryMode(
           outbound_links: listing.outboundLinks,
           raw_listing_id: rawListingId,
           // Detail quality tracking
-          detail_status: detailData ? completeness.status : 'pending',
+          detail_status: detailData ? completeness.status : detailStatus,
           detail_completeness_score: completeness.score,
           detail_attempts: detailData ? 1 : 0,
           detail_scraped_at: detailData ? now : null,
-          needs_detail_rescrape: detailData ? (completeness.status !== 'ok') : true,
+          needs_detail_rescrape: detailData ? (completeness.status !== 'ok') : (detailStatus !== 'no_links'),
           last_detail_error: completeness.status !== 'ok' && completeness.missingFields.length > 0
             ? `Missing: ${completeness.missingFields.join(', ')}`
             : null,
           chosen_detail_source: chosenDetailSource,
           chosen_detail_url: chosenDetailUrl,
+          // GOLDEN MASTERPLAN v4 NEW FIELDS
+          dealer_key: dealerKey,
+          dealer_key_confidence: dealerKeyConfidence,
+          fingerprint_hash_v2: fingerprintV2,
+          external_canonical_url_hash: externalUrlHash,
+          image_url_thumbnail: listing.imageUrlThumbnail,
+          listing_ready: listingReady,
+          taxation_ready: taxationReady,
+          detail_sources_tried: chosenDetailSource ? [{
+            source: chosenDetailSource,
+            url: chosenDetailUrl,
+            attemptedAt: now,
+            score: completeness.score,
+            success: completeness.status === 'ok' || completeness.status === 'partial',
+          }] : [],
+          detail_best_score: completeness.score,
         };
         
         // Add detail data if available
@@ -2176,7 +2324,6 @@ async function runDiscoveryMode(
           stats.listingsNew++;
           safety.successfulParses++;
 
-          // Log creation event
           await logVehicleEvent(supabase, newListing.id, 'created', {
             price: listing.price,
             listing: { make, model, year: listing.year, mileage: listing.mileage, fuel_type: listing.fuelType },
@@ -2208,12 +2355,11 @@ async function runDiscoveryMode(
             .eq('id', existingListing.id);
         }
         
-        // Handle returned listings (was gone_suspected, now seen again)
+        // Handle returned listings
         if (existingListing.status === 'gone_suspected') {
           const daysSinceGone = daysSince(existingListing.gone_detected_at);
           
           if (daysSinceGone < SOLD_CONFIRMED_DAYS) {
-            // RETURNED (false sale)
             await supabase
               .from('listings')
               .update({
@@ -2225,6 +2371,11 @@ async function runDiscoveryMode(
                 last_seen_at: now,
                 content_hash: contentHash,
                 raw_listing_id: rawListingId,
+                // Update v4 fields
+                dealer_key: dealerKey,
+                dealer_key_confidence: dealerKeyConfidence,
+                fingerprint_hash_v2: fingerprintV2,
+                external_canonical_url_hash: externalUrlHash,
               })
               .eq('id', existingListing.id);
 
@@ -2259,16 +2410,19 @@ async function runDiscoveryMode(
               previous_price: existingListing.price,
               last_seen_at: now,
               content_hash: contentHash,
+              // Update v4 fields
+              dealer_key: dealerKey,
+              dealer_key_confidence: dealerKeyConfidence,
+              fingerprint_hash_v2: fingerprintV2,
+              external_canonical_url_hash: externalUrlHash,
             })
             .eq('id', existingListing.id);
 
-          // Log price change event
           await logVehicleEvent(supabase, existingListing.id, 'price_changed', {
             price: listing.price,
             reason: { previous_price: existingListing.price },
           });
 
-          // Create snapshot
           await supabase.from('listing_snapshots').insert({
             listing_id: existingListing.id,
             price: listing.price,
@@ -2280,13 +2434,18 @@ async function runDiscoveryMode(
 
           stats.listingsUpdated++;
         } else {
-          // Just update last_seen_at and ensure canonical URL is set
+          // Just update last_seen_at
           await supabase
             .from('listings')
             .update({ 
               last_seen_at: now, 
               status: 'active',
               canonical_url: canonicalUrl,
+              // Update v4 fields
+              dealer_key: dealerKey,
+              dealer_key_confidence: dealerKeyConfidence,
+              fingerprint_hash_v2: fingerprintV2,
+              external_canonical_url_hash: externalUrlHash,
             })
             .eq('id', existingListing.id);
         }
@@ -2317,7 +2476,7 @@ async function runLifecycleCheckMode(
   console.log(`[LIFECYCLE] Starting lifecycle check mode`);
   const now = new Date().toISOString();
 
-  // 1. Find listings not seen in > GONE_SUSPECTED_DAYS days and still active
+  // 1. Find stale active listings
   let query = supabase
     .from('listings')
     .select('id, url, first_seen_at, last_seen_at, price, license_plate_hash, vehicle_fingerprint, make, model, year, mileage, fuel_type')
@@ -2338,7 +2497,6 @@ async function runLifecycleCheckMode(
 
   console.log(`[LIFECYCLE] Found ${staleListings?.length || 0} stale listings to mark as gone_suspected`);
 
-  // Mark stale listings as gone_suspected
   for (const listing of (staleListings || [])) {
     const daysOnMarket = daysSince(listing.first_seen_at);
 
@@ -2359,7 +2517,7 @@ async function runLifecycleCheckMode(
     stats.listingsGoneSuspected++;
   }
 
-  // 2. Confirm sales for listings gone > SOLD_CONFIRMED_DAYS days
+  // 2. Confirm sales for old gone listings
   const { data: oldGoneListings, error: oldGoneError } = await supabase
     .from('listings')
     .select('id, url, first_seen_at, gone_detected_at, price, license_plate_hash, vehicle_fingerprint, make, model, year, mileage, fuel_type')
@@ -2418,12 +2576,12 @@ serve(async (req) => {
     rawListingsSaved: 0,
     detailHtmlSaved: 0,
     skippedIndexOnly: 0,
-    // Detail stats
     detailAttempted: 0,
     detailOk: 0,
     detailPartial: 0,
     detailFailed: 0,
     detailHealed: 0,
+    detailNoLinks: 0,
     avgCompletenessScore: 0,
     completenessScores: [],
     missingFieldsCounts: {},
@@ -2456,7 +2614,7 @@ serve(async (req) => {
       indexOnly = false,
     } = body;
     
-    console.log(`[START] Gaspedaal ${mode} job ${jobId}`);
+    console.log(`[START] Gaspedaal ${mode} job ${jobId} - GOLDEN MASTERPLAN v4`);
     console.log(`[CONFIG] maxPages=${maxPages}, maxCredits=${maxCredits}, dryRun=${dryRun}, indexOnly=${indexOnly}`);
     console.log(`[CONFIG] targetMakes=${targetMakes.join(',') || 'all'}`);
 
@@ -2471,7 +2629,7 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Get safety config from database
+    // Get safety config
     const { data: configData } = await supabase
       .from('scraper_configs')
       .select('max_credits_per_day, error_rate_threshold, parse_quality_threshold')
@@ -2487,18 +2645,17 @@ serve(async (req) => {
 
     console.log('[SAFETY CONFIG]', JSON.stringify(safetyConfig));
 
-    // Get today's credit usage (skip in dry run)
+    // Get today's credit usage
     if (!dryRun) {
       safety.creditsUsedToday = await getTodayCreditUsage(supabase, 'gaspedaal');
       console.log(`[CREDITS] Used today before job: ${safety.creditsUsedToday}`);
 
-      // Pre-flight budget check
       if (safety.creditsUsedToday >= safetyConfig.maxCreditsPerDay) {
         throw new Error(`Daily credit budget already reached (${safety.creditsUsedToday}/${safetyConfig.maxCreditsPerDay})`);
       }
     }
 
-    // Update job status to running
+    // Update job status
     await supabase
       .from('scraper_jobs')
       .update({ 
@@ -2539,14 +2696,12 @@ serve(async (req) => {
       ? safety.errors / safety.totalProcessed 
       : 0;
     
-    // Calculate average completeness score
     if (stats.completenessScores.length > 0) {
       stats.avgCompletenessScore = Math.round(
         stats.completenessScores.reduce((a, b) => a + b, 0) / stats.completenessScores.length
       );
     }
 
-    // Determine stop reason
     let stopReason = safety.stopReason;
     if (dryRun) stopReason = 'dry_run_complete';
     else if (indexOnly && !stopReason) stopReason = 'index_only_complete';
@@ -2574,7 +2729,7 @@ serve(async (req) => {
       })
       .eq('id', jobId);
 
-    // Update daily credit usage (skip in dry run)
+    // Update daily credit usage
     if (!dryRun) {
       await updateDailyCreditUsage(
         supabase,
@@ -2598,6 +2753,7 @@ serve(async (req) => {
       dryRun,
       indexOnly,
       duration: durationSeconds,
+      goldenMasterplanVersion: 'v4',
       stats: {
         ...stats,
         creditsUsed: dryRun ? 0 : safety.creditsUsedThisRun,
@@ -2608,12 +2764,12 @@ serve(async (req) => {
         rawListingsSaved: stats.rawListingsSaved,
         detailHtmlSaved: stats.detailHtmlSaved,
         skippedIndexOnly: stats.skippedIndexOnly,
-        // Detail stats
         detailStats: {
           attempted: stats.detailAttempted,
           ok: stats.detailOk,
           partial: stats.detailPartial,
           failed: stats.detailFailed,
+          noLinks: stats.detailNoLinks,
           healed: stats.detailHealed,
           avgCompletenessScore: stats.avgCompletenessScore,
           topMissingFields,
@@ -2631,7 +2787,6 @@ serve(async (req) => {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('[FATAL ERROR]', error);
 
-    // Try to update job as failed
     try {
       const { jobId } = await req.clone().json();
       const supabaseUrl = Deno.env.get('SUPABASE_URL')!;

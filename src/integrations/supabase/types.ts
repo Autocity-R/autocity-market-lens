@@ -169,16 +169,22 @@ export type Database = {
           courantheid_trend: string | null
           dealer_city: string | null
           dealer_id: string | null
+          dealer_key: string | null
+          dealer_key_confidence: string | null
           dealer_name: string | null
           description_raw: string | null
           detail_attempts: number | null
+          detail_best_score: number | null
           detail_completeness_score: number | null
           detail_scraped_at: string | null
+          detail_sources_tried: Json | null
           detail_status: string | null
           doors: number | null
           drivetrain: string | null
           electric_range_km: number | null
           engine_cc: number | null
+          external_canonical_url_hash: string | null
+          fingerprint_hash_v2: string | null
           first_seen_at: string
           fuel_type: string | null
           generation: string | null
@@ -186,11 +192,13 @@ export type Database = {
           id: string
           image_count: number | null
           image_url_main: string | null
+          image_url_thumbnail: string | null
           is_normalized: boolean | null
           last_detail_error: string | null
           last_seen_at: string
           license_plate: string | null
           license_plate_hash: string | null
+          listing_ready: boolean | null
           make: string | null
           mileage: number | null
           mileage_bucket: number | null
@@ -211,6 +219,7 @@ export type Database = {
           sold_confirmed_at: string | null
           source: string
           status: string
+          taxation_ready: boolean | null
           title: string
           transmission: string | null
           url: string
@@ -231,16 +240,22 @@ export type Database = {
           courantheid_trend?: string | null
           dealer_city?: string | null
           dealer_id?: string | null
+          dealer_key?: string | null
+          dealer_key_confidence?: string | null
           dealer_name?: string | null
           description_raw?: string | null
           detail_attempts?: number | null
+          detail_best_score?: number | null
           detail_completeness_score?: number | null
           detail_scraped_at?: string | null
+          detail_sources_tried?: Json | null
           detail_status?: string | null
           doors?: number | null
           drivetrain?: string | null
           electric_range_km?: number | null
           engine_cc?: number | null
+          external_canonical_url_hash?: string | null
+          fingerprint_hash_v2?: string | null
           first_seen_at?: string
           fuel_type?: string | null
           generation?: string | null
@@ -248,11 +263,13 @@ export type Database = {
           id?: string
           image_count?: number | null
           image_url_main?: string | null
+          image_url_thumbnail?: string | null
           is_normalized?: boolean | null
           last_detail_error?: string | null
           last_seen_at?: string
           license_plate?: string | null
           license_plate_hash?: string | null
+          listing_ready?: boolean | null
           make?: string | null
           mileage?: number | null
           mileage_bucket?: number | null
@@ -273,6 +290,7 @@ export type Database = {
           sold_confirmed_at?: string | null
           source: string
           status?: string
+          taxation_ready?: boolean | null
           title: string
           transmission?: string | null
           url: string
@@ -293,16 +311,22 @@ export type Database = {
           courantheid_trend?: string | null
           dealer_city?: string | null
           dealer_id?: string | null
+          dealer_key?: string | null
+          dealer_key_confidence?: string | null
           dealer_name?: string | null
           description_raw?: string | null
           detail_attempts?: number | null
+          detail_best_score?: number | null
           detail_completeness_score?: number | null
           detail_scraped_at?: string | null
+          detail_sources_tried?: Json | null
           detail_status?: string | null
           doors?: number | null
           drivetrain?: string | null
           electric_range_km?: number | null
           engine_cc?: number | null
+          external_canonical_url_hash?: string | null
+          fingerprint_hash_v2?: string | null
           first_seen_at?: string
           fuel_type?: string | null
           generation?: string | null
@@ -310,11 +334,13 @@ export type Database = {
           id?: string
           image_count?: number | null
           image_url_main?: string | null
+          image_url_thumbnail?: string | null
           is_normalized?: boolean | null
           last_detail_error?: string | null
           last_seen_at?: string
           license_plate?: string | null
           license_plate_hash?: string | null
+          listing_ready?: boolean | null
           make?: string | null
           mileage?: number | null
           mileage_bucket?: number | null
@@ -335,6 +361,7 @@ export type Database = {
           sold_confirmed_at?: string | null
           source?: string
           status?: string
+          taxation_ready?: boolean | null
           title?: string
           transmission?: string | null
           url?: string
