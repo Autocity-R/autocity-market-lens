@@ -743,6 +743,8 @@ async function saveRawListing(
         chosen_detail_source: chosenDetailSource,
         chosen_detail_url: chosenDetailUrl,
         vin_hash: vinHash,
+        gaspedaal_occasion_id: listing.gaspedaalOccasionId,
+        gaspedaal_detail_url: listing.gaspedaalDetailUrl,
       };
       
       // Add detail data if available
@@ -792,6 +794,8 @@ async function saveRawListing(
         chosen_detail_source: chosenDetailSource,
         chosen_detail_url: chosenDetailUrl,
         vin_hash: vinHash,
+        gaspedaal_occasion_id: listing.gaspedaalOccasionId,
+        gaspedaal_detail_url: listing.gaspedaalDetailUrl,
       };
       
       // Add detail data if available
@@ -2405,6 +2409,9 @@ async function runDiscoveryMode(
             success: completeness.status === 'ok' || completeness.status === 'partial',
           }] : [],
           detail_best_score: completeness.score,
+          // GOLDEN MASTERPLAN v4: Gaspedaal occasion URL
+          gaspedaal_occasion_id: listing.gaspedaalOccasionId,
+          gaspedaal_detail_url: listing.gaspedaalDetailUrl,
         };
         
         // Add detail data if available
