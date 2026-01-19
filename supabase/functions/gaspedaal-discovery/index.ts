@@ -926,6 +926,147 @@ function detectLinkSource(url: string): string {
   return 'other';
 }
 
+// ===== GASPEDAAL REDIRECT API PATTERNS =====
+const GASPEDAAL_REDIRECT_PATTERNS = [
+  // Pattern A: API redirect endpoints
+  'https://www.gaspedaal.nl/api/redirect/{occasionId}?source={source}',
+  'https://www.gaspedaal.nl/api/occasion/{occasionId}/redirect?type={source}',
+  'https://api.gaspedaal.nl/redirect/vehicle/{occasionId}',
+  // Pattern B: Click-through URLs
+  'https://www.gaspedaal.nl/out/{occasionId}/{source}',
+  'https://www.gaspedaal.nl/click/{occasionId}?source={source}',
+  'https://www.gaspedaal.nl/goto/{occasionId}?source={source}',
+  // Pattern C: Occasion page redirect
+  'https://www.gaspedaal.nl/occasion/{occasionId}/redirect',
+  'https://www.gaspedaal.nl/occasion/{occasionId}/out?source={source}',
+];
+
+// ===== GASPEDAAL REDIRECT RESOLVER (PRIORITY: DEALERSITE FIRST) =====
+async function resolveGaspedaalRedirect(
+  occasionId: string,
+  sources: string[]
+): Promise<Array<{ source: string; url: string; resolvedFrom: string }>> {
+  const resolvedLinks: Array<{ source: string; url: string; resolvedFrom: string }> = [];
+  const testedPatterns: Set<string> = new Set();
+  
+  // Priority order: dealersite first, then other portals
+  const prioritizedSources = [
+    ...sources.filter(s => s === 'dealersite'),
+    ...sources.filter(s => s !== 'dealersite'),
+  ];
+  
+  // Add default sources if not present
+  const allSources = [...new Set([...prioritizedSources, 'dealersite', 'autotrack', 'autoscout24'])];
+  
+  console.log(`[REDIRECT] Resolving URLs for occasion ${occasionId}, sources: ${allSources.join(', ')}`);
+  
+  for (const source of allSources) {
+    // Stop if we already have dealersite (priority #1)
+    if (source !== 'dealersite' && resolvedLinks.some(l => l.source === 'dealersite')) {
+      console.log(`[REDIRECT] Already have dealersite, skipping ${source}`);
+      continue;
+    }
+    
+    for (const pattern of GASPEDAAL_REDIRECT_PATTERNS) {
+      const url = pattern
+        .replace('{occasionId}', occasionId)
+        .replace('{source}', source);
+      
+      // Skip if already tested
+      if (testedPatterns.has(url)) continue;
+      testedPatterns.add(url);
+      
+      try {
+        const response = await fetch(url, {
+          method: 'HEAD',
+          redirect: 'manual',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'nl-NL,nl;q=0.9,en;q=0.8',
+            'Referer': 'https://www.gaspedaal.nl/',
+          },
+        });
+        
+        // Check for redirect response (301, 302, 303, 307, 308)
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get('location');
+          if (location && !location.includes('gaspedaal.nl')) {
+            const detectedSource = detectLinkSource(location);
+            const finalSource = detectedSource !== 'other' ? detectedSource : source;
+            
+            // Avoid duplicates
+            if (!resolvedLinks.some(l => l.url === location)) {
+              console.log(`[REDIRECT] SUCCESS: ${pattern} -> ${location} (source: ${finalSource})`);
+              resolvedLinks.push({
+                source: finalSource,
+                url: location,
+                resolvedFrom: pattern,
+              });
+              
+              // If we found dealersite, that's our priority - can continue but log it
+              if (finalSource === 'dealersite') {
+                console.log(`[REDIRECT] Found dealersite URL, continuing to find backup sources`);
+              }
+            }
+          }
+        }
+        
+        // Also try GET for JSON responses
+        if (response.status === 200) {
+          try {
+            const getResponse = await fetch(url, {
+              method: 'GET',
+              redirect: 'manual',
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json,text/html',
+                'Referer': 'https://www.gaspedaal.nl/',
+              },
+            });
+            const text = await getResponse.text();
+            
+            // Check for JSON response with URL
+            if (text.startsWith('{') || text.startsWith('[')) {
+              try {
+                const json = JSON.parse(text);
+                const foundUrl = json.url || json.redirect || json.location || json.href;
+                if (foundUrl && !foundUrl.includes('gaspedaal.nl')) {
+                  const detectedSource = detectLinkSource(foundUrl);
+                  const finalSource = detectedSource !== 'other' ? detectedSource : source;
+                  
+                  if (!resolvedLinks.some(l => l.url === foundUrl)) {
+                    console.log(`[REDIRECT] JSON SUCCESS: ${pattern} -> ${foundUrl}`);
+                    resolvedLinks.push({
+                      source: finalSource,
+                      url: foundUrl,
+                      resolvedFrom: `${pattern} (JSON)`,
+                    });
+                  }
+                }
+              } catch {}
+            }
+          } catch {}
+        }
+      } catch (error) {
+        // Silent fail - try next pattern
+      }
+      
+      // Small delay to avoid rate limiting
+      await delay(50);
+    }
+    
+    // Break early if we have at least 2 sources including dealersite
+    if (resolvedLinks.length >= 2 && resolvedLinks.some(l => l.source === 'dealersite')) {
+      console.log(`[REDIRECT] Got dealersite + backup, stopping early`);
+      break;
+    }
+  }
+  
+  console.log(`[REDIRECT] Resolved ${resolvedLinks.length} external URLs for occasion ${occasionId}`);
+  return resolvedLinks;
+}
+
 // ===== SELECT BEST DETAIL URL (prioriteer dealersite) =====
 function selectBestDetailUrl(
   gaspedaalUrl: string,
@@ -2200,7 +2341,7 @@ async function runDiscoveryMode(
       );
       const isNewListing = !preliminaryLookup;
       
-      // GOLDEN MASTERPLAN v4: DETAIL SCRAPE DECISION - GASPEDAAL OCCASION URL PRIORITY
+      // GOLDEN MASTERPLAN v5: DETAIL SCRAPE DECISION - REDIRECT API PRIORITY
       if (indexOnly) {
         if (isNewListing) {
           stats.skippedIndexOnly++;
@@ -2211,11 +2352,73 @@ async function runDiscoveryMode(
         const budgetCheck = checkSafetyLimits(safety, safetyConfig);
         
         if (!budgetCheck.shouldStop) {
-          // PRIORITY 1: Use Gaspedaal occasion page (extracted from card HTML)
-          if (listing.gaspedaalDetailUrl) {
+          // ===== PHASE 1: RESOLVE EXTERNAL URLS VIA GASPEDAAL REDIRECT API =====
+          if (listing.gaspedaalOccasionId && listing.outboundLinks.length === 0) {
+            console.log(`[REDIRECT] No direct links found, trying redirect API for occasion ${listing.gaspedaalOccasionId}`);
+            
+            // Use outbound sources if available, otherwise try common sources
+            const sourcesToTry = listing.outboundSources.length > 0 
+              ? listing.outboundSources 
+              : ['dealersite', 'autotrack', 'autoscout24'];
+            
+            const resolvedLinks = await resolveGaspedaalRedirect(listing.gaspedaalOccasionId, sourcesToTry);
+            
+            if (resolvedLinks.length > 0) {
+              console.log(`[REDIRECT] Resolved ${resolvedLinks.length} external URLs via redirect API`);
+              for (const resolved of resolvedLinks) {
+                if (!listing.outboundLinks.find(l => l.url === resolved.url)) {
+                  listing.outboundLinks.push({
+                    source: resolved.source,
+                    url: resolved.url,
+                    foundAt: resolved.resolvedFrom,
+                  });
+                }
+              }
+              // Update outbound sources
+              listing.outboundSources = [...new Set([...listing.outboundSources, ...resolvedLinks.map(r => r.source)])];
+            }
+          }
+          
+          // ===== PHASE 2: SELECT BEST DETAIL URL (DEALERSITE PRIORITY) =====
+          if (listing.outboundLinks.length > 0) {
+            const bestUrl = selectBestDetailUrl('', listing.outboundLinks);
+            chosenDetailSource = bestUrl.source;
+            chosenDetailUrl = bestUrl.url;
+            console.log(`[DETAIL] FIRST SEEN: Using ${bestUrl.source} -> ${bestUrl.url.substring(0, 80)}...`);
+            
+            stats.detailAttempted++;
+            detailHtml = await scrapeWithFirecrawl(bestUrl.url, firecrawlKey, safety, false, dryRun);
+            
+            if (detailHtml) {
+              detailData = extractDetailPageData(detailHtml);
+              console.log(`[DETAIL] Extracted ${detailData.optionsRawList?.length || 0} options from ${bestUrl.source}`);
+            } else {
+              console.log(`[DETAIL] Failed to scrape ${bestUrl.source}, trying fallback...`);
+              
+              // Try second best source if available
+              const remainingLinks = listing.outboundLinks.filter(l => l.url !== bestUrl.url);
+              if (remainingLinks.length > 0) {
+                const fallbackUrl = selectBestDetailUrl('', remainingLinks);
+                console.log(`[DETAIL] Fallback: Using ${fallbackUrl.source} -> ${fallbackUrl.url.substring(0, 80)}...`);
+                
+                stats.detailAttempted++;
+                detailHtml = await scrapeWithFirecrawl(fallbackUrl.url, firecrawlKey, safety, false, dryRun);
+                
+                if (detailHtml) {
+                  chosenDetailSource = fallbackUrl.source;
+                  chosenDetailUrl = fallbackUrl.url;
+                  detailData = extractDetailPageData(detailHtml);
+                  console.log(`[DETAIL] Fallback successful: ${detailData.optionsRawList?.length || 0} options from ${fallbackUrl.source}`);
+                }
+              }
+            }
+            await delay(DELAY_BETWEEN_REQUESTS_MS);
+            
+          // ===== PHASE 3: TRY GASPEDAAL OCCASION PAGE AS LAST RESORT =====
+          } else if (listing.gaspedaalDetailUrl) {
             chosenDetailSource = 'gaspedaal_occasion';
             chosenDetailUrl = listing.gaspedaalDetailUrl;
-            console.log(`[DETAIL] FIRST SEEN: Using Gaspedaal occasion page -> ${chosenDetailUrl}`);
+            console.log(`[DETAIL] FALLBACK: Using Gaspedaal occasion page -> ${chosenDetailUrl}`);
             
             stats.detailAttempted++;
             detailHtml = await scrapeWithFirecrawl(chosenDetailUrl, firecrawlKey, safety, false, dryRun);
@@ -2224,7 +2427,7 @@ async function runDiscoveryMode(
               detailData = extractDetailPageData(detailHtml);
               console.log(`[DETAIL] Extracted ${detailData.optionsRawList?.length || 0} options from gaspedaal_occasion`);
               
-              // PHASE 2: Extract external portal links from Gaspedaal occasion page
+              // Try to extract external portal links from Gaspedaal occasion page HTML
               const externalLinks = extractExternalLinksFromGaspedaalDetail(detailHtml);
               if (externalLinks.length > 0) {
                 console.log(`[DETAIL] Found ${externalLinks.length} external portal links on Gaspedaal page`);
@@ -2235,22 +2438,7 @@ async function runDiscoveryMode(
                 }
               }
             } else {
-              console.log(`[DETAIL] Gaspedaal occasion page failed to scrape`);
-            }
-            await delay(DELAY_BETWEEN_REQUESTS_MS);
-            
-          // PRIORITY 2: Fallback to external links if available  
-          } else if (listing.outboundLinks.length > 0) {
-            const bestUrl = selectBestDetailUrl('', listing.outboundLinks);
-            chosenDetailSource = bestUrl.source;
-            chosenDetailUrl = bestUrl.url;
-            console.log(`[DETAIL] FIRST SEEN: Using external portal ${bestUrl.source} -> ${bestUrl.url.substring(0, 80)}...`);
-            
-            stats.detailAttempted++;
-            detailHtml = await scrapeWithFirecrawl(bestUrl.url, firecrawlKey, safety, false, dryRun);
-            if (detailHtml) {
-              detailData = extractDetailPageData(detailHtml);
-              console.log(`[DETAIL] Extracted ${detailData.optionsRawList?.length || 0} options from ${bestUrl.source}`);
+              console.log(`[DETAIL] Gaspedaal occasion page failed to scrape (SPA skeleton)`);
             }
             await delay(DELAY_BETWEEN_REQUESTS_MS);
             
