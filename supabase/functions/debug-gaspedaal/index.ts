@@ -33,7 +33,7 @@ serve(async (req) => {
         url,
         formats: ['html', 'links'],
         onlyMainContent: false,
-        waitFor: 5000, // Longer wait for dynamic content
+        waitFor: 5000,
       }),
     });
 
@@ -53,64 +53,155 @@ serve(async (req) => {
     console.log('[DEBUG] HTML length:', html.length);
     console.log('[DEBUG] Links count:', links.length);
     
-    // Search for /occasion/ links in the raw HTML and the links array
-    const occasionLinksFromHtml: string[] = [];
-    const occasionPattern = /\/occasion\/[a-zA-Z0-9\-_]+/gi;
+    // ===== ENHANCED ANALYSIS =====
+    
+    // 1. Parse __NEXT_DATA__ completely
+    let nextDataAnalysis: any = { found: false };
+    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (nextDataMatch) {
+      try {
+        const nextData = JSON.parse(nextDataMatch[1]);
+        const pageProps = nextData?.props?.pageProps || {};
+        nextDataAnalysis = {
+          found: true,
+          keys: Object.keys(pageProps),
+          hasListings: !!pageProps.listings,
+          listingsCount: pageProps.listings?.length || 0,
+          sampleListing: pageProps.listings?.[0] ? {
+            keys: Object.keys(pageProps.listings[0]),
+            hasUrl: 'url' in pageProps.listings[0],
+            hasId: 'id' in pageProps.listings[0],
+            hasSlug: 'slug' in pageProps.listings[0],
+            urlValue: pageProps.listings[0].url || pageProps.listings[0].slug || pageProps.listings[0].id || 'NO_URL_FOUND',
+            outboundLinks: pageProps.listings[0].outboundLinks || pageProps.listings[0].externalLinks || 'NONE',
+            fullSample: JSON.stringify(pageProps.listings[0]).substring(0, 2000),
+          } : null,
+        };
+      } catch (e) {
+        nextDataAnalysis = { found: true, parseError: String(e) };
+      }
+    }
+    
+    // 2. Find ALL anchor tags with href containing gaspedaal.nl (internal links)
+    const internalLinkPattern = /href="(https:\/\/www\.gaspedaal\.nl\/[^"]+)"/gi;
+    const internalLinks: string[] = [];
     let match;
-    while ((match = occasionPattern.exec(html)) !== null) {
-      occasionLinksFromHtml.push(match[0]);
+    while ((match = internalLinkPattern.exec(html)) !== null) {
+      if (!internalLinks.includes(match[1])) {
+        internalLinks.push(match[1]);
+      }
     }
     
-    const occasionLinksFromArray = links.filter((l: string) => l.includes('/occasion/'));
+    // 3. Find occasion links specifically
+    const occasionLinks = internalLinks.filter(l => l.includes('/occasion/') || l.includes('/auto/'));
     
-    // Find where listings are in the HTML
-    const occTitleIndex = html.indexOf('isOccTitle');
-    const dataTestIdListing = html.indexOf('data-testid="listing-card"');
-    const listingCard = html.indexOf('listing-card');
-    const carCard = html.indexOf('car-card');
+    // 4. Look for listing wrapper elements with hrefs
+    const listingWrapperPatterns = [
+      /<a[^>]*href="([^"]*)"[^>]*class="[^"]*listing[^"]*"[^>]*>/gi,
+      /<a[^>]*class="[^"]*listing[^"]*"[^>]*href="([^"]*)"[^>]*>/gi,
+      /<a[^>]*href="([^"]*\/occasion\/[^"]*)"[^>]*>/gi,
+      /<a[^>]*href="([^"]*\/auto\/[^"]*)"[^>]*>/gi,
+    ];
     
-    // Find typical SPA patterns
-    const hasReactRoot = html.includes('__next') || html.includes('react-root') || html.includes('__NEXT_DATA__');
-    const hasStateHydration = html.includes('__APOLLO_STATE__') || html.includes('__INITIAL_STATE__');
-    
-    // Extract a sample around isOccTitle to understand structure
-    let sampleAroundOccTitle = '';
-    if (occTitleIndex > -1) {
-      const start = Math.max(0, occTitleIndex - 500);
-      const end = Math.min(html.length, occTitleIndex + 2000);
-      sampleAroundOccTitle = html.substring(start, end);
+    const listingWrapperLinks: string[] = [];
+    for (const pattern of listingWrapperPatterns) {
+      while ((match = pattern.exec(html)) !== null) {
+        if (!listingWrapperLinks.includes(match[1])) {
+          listingWrapperLinks.push(match[1]);
+        }
+      }
     }
     
-    // Find data attributes that might contain listing data
-    const dataMatches = html.match(/data-[a-z-]+="[^"]*"/gi) || [];
-    const uniqueDataAttrs = [...new Set(dataMatches.map((m: string) => m.split('=')[0]))].slice(0, 30);
+    // 5. Find the anchor tag wrapping each isOccTitle
+    const anchorAroundTitlePattern = /<a[^>]*href="([^"]*)"[^>]*>[\s\S]{0,500}<h2[^>]*class="isOccTitle/gi;
+    const anchorAroundTitles: string[] = [];
+    while ((match = anchorAroundTitlePattern.exec(html)) !== null) {
+      anchorAroundTitles.push(match[1]);
+    }
     
-    // Look for embedded JSON with listing data
-    const jsonInScript = html.match(/<script[^>]*>(\s*\{[\s\S]*?"listings"[\s\S]*?\})\s*<\/script>/i);
-    const hasEmbeddedListings = !!jsonInScript;
+    // 6. Reverse pattern - find h2 and look backward for anchor
+    const titleIndices: number[] = [];
+    const titlePattern = /isOccTitle/gi;
+    while ((match = titlePattern.exec(html)) !== null) {
+      titleIndices.push(match.index);
+    }
     
-    // Count total hrefs
-    const hrefCount = (html.match(/href="/gi) || []).length;
+    const anchorBeforeTitles: string[] = [];
+    for (const idx of titleIndices.slice(0, 5)) {
+      const windowStart = Math.max(0, idx - 1000);
+      const window = html.substring(windowStart, idx);
+      // Find the last <a href before this point
+      const lastAnchorMatch = window.match(/.*<a[^>]*href="([^"]*)"[^>]*>/s);
+      if (lastAnchorMatch) {
+        anchorBeforeTitles.push(lastAnchorMatch[1]);
+      }
+    }
+    
+    // 7. Extract a more focused sample around the first listing
+    let sampleListingCard = '';
+    const firstTitleIndex = html.indexOf('isOccTitle');
+    if (firstTitleIndex > -1) {
+      // Go back to find the start of the card (look for opening tag patterns)
+      const searchBackStart = Math.max(0, firstTitleIndex - 2000);
+      const beforeTitle = html.substring(searchBackStart, firstTitleIndex);
+      
+      // Find the outermost <a tag or card container
+      const cardStartMatch = beforeTitle.match(/.*(<a[^>]*href="[^"]*"[^>]*>)/s);
+      const startOffset = cardStartMatch ? beforeTitle.lastIndexOf(cardStartMatch[1]) : 0;
+      
+      const cardStart = searchBackStart + startOffset;
+      const cardEnd = Math.min(html.length, firstTitleIndex + 1500);
+      sampleListingCard = html.substring(cardStart, cardEnd);
+    }
+    
+    // 8. Check for any external URLs (autotrack, autoscout, etc) anywhere in the HTML
+    const externalUrlPattern = /href="(https?:\/\/(?!www\.gaspedaal\.nl)[^"]+)"/gi;
+    const externalUrls: string[] = [];
+    while ((match = externalUrlPattern.exec(html)) !== null) {
+      if (!externalUrls.includes(match[1]) && externalUrls.length < 30) {
+        externalUrls.push(match[1]);
+      }
+    }
+    
+    // Categorize external URLs
+    const externalByDomain: Record<string, string[]> = {};
+    for (const url of externalUrls) {
+      try {
+        const domain = new URL(url).hostname;
+        if (!externalByDomain[domain]) externalByDomain[domain] = [];
+        externalByDomain[domain].push(url);
+      } catch {}
+    }
     
     return new Response(
       JSON.stringify({
         success: true,
         htmlLength: html.length,
         linksFromFirecrawl: links.length,
-        occasionLinksFromHtml: [...new Set(occasionLinksFromHtml)].slice(0, 50),
-        occasionLinksFromArray: occasionLinksFromArray.slice(0, 50),
-        occTitleFound: occTitleIndex > -1,
-        occTitleIndex,
-        dataTestIdListing: dataTestIdListing > -1,
-        listingCardFound: listingCard > -1,
-        carCardFound: carCard > -1,
-        hasReactRoot,
-        hasStateHydration,
-        hasEmbeddedListings,
-        hrefCount,
-        uniqueDataAttrs,
-        sampleAroundOccTitle: sampleAroundOccTitle.substring(0, 3000),
-        sampleLinks: links.slice(0, 30),
+        
+        // __NEXT_DATA__ analysis
+        nextDataAnalysis,
+        
+        // Link analysis
+        internalLinksCount: internalLinks.length,
+        occasionLinks: occasionLinks.slice(0, 20),
+        listingWrapperLinks: listingWrapperLinks.slice(0, 20),
+        anchorAroundTitles: anchorAroundTitles.slice(0, 10),
+        anchorBeforeTitles: anchorBeforeTitles.slice(0, 10),
+        
+        // External URL analysis
+        externalUrlsCount: externalUrls.length,
+        externalByDomain: Object.fromEntries(
+          Object.entries(externalByDomain).map(([k, v]) => [k, v.slice(0, 3)])
+        ),
+        
+        // Sample content for inspection
+        sampleListingCard: sampleListingCard.substring(0, 4000),
+        
+        // Original analysis
+        hasReactRoot: html.includes('__next') || html.includes('__NEXT_DATA__'),
+        occTitleFound: firstTitleIndex > -1,
+        titleCount: titleIndices.length,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
