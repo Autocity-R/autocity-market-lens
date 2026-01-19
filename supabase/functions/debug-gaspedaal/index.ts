@@ -5,6 +5,259 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// ===== REDIRECT API PATTERNS TO TEST =====
+const REDIRECT_PATTERNS = [
+  // Pattern A: API redirect endpoints
+  { name: 'api_redirect', template: 'https://www.gaspedaal.nl/api/redirect/{occasionId}?source={source}' },
+  { name: 'api_occasion_redirect', template: 'https://www.gaspedaal.nl/api/occasion/{occasionId}/redirect?type={source}' },
+  { name: 'api_gaspedaal', template: 'https://api.gaspedaal.nl/redirect/vehicle/{occasionId}' },
+  
+  // Pattern B: Click-through URLs
+  { name: 'out_source', template: 'https://www.gaspedaal.nl/out/{occasionId}/{source}' },
+  { name: 'click', template: 'https://www.gaspedaal.nl/click/{occasionId}?source={source}' },
+  { name: 'goto', template: 'https://www.gaspedaal.nl/goto/{occasionId}?source={source}' },
+  
+  // Pattern C: Occasion page redirect
+  { name: 'occasion_redirect', template: 'https://www.gaspedaal.nl/occasion/{occasionId}/redirect' },
+  { name: 'occasion_out', template: 'https://www.gaspedaal.nl/occasion/{occasionId}/out?source={source}' },
+  
+  // Pattern D: Direct API
+  { name: 'v1_api', template: 'https://api.gaspedaal.nl/v1/occasions/{occasionId}' },
+  { name: 'v1_outbound', template: 'https://api.gaspedaal.nl/v1/occasions/{occasionId}/outbound' },
+];
+
+const SOURCES_TO_TEST = ['dealersite', 'autotrack', 'autoscout24', 'anwb', 'marktplaats'];
+
+// ===== REDIRECT RESOLVER FUNCTION =====
+async function testRedirectPattern(
+  pattern: string,
+  occasionId: string,
+  source: string
+): Promise<{ 
+  pattern: string; 
+  status: number; 
+  location: string | null; 
+  isRedirect: boolean;
+  headers: Record<string, string>;
+  bodyPreview: string | null;
+  error: string | null;
+}> {
+  const url = pattern
+    .replace('{occasionId}', occasionId)
+    .replace('{source}', source);
+  
+  try {
+    // Try HEAD first (faster, no body)
+    const headResponse = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'manual',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Referer': 'https://www.gaspedaal.nl/',
+      },
+    });
+    
+    const headersObj: Record<string, string> = {};
+    headResponse.headers.forEach((value, key) => {
+      headersObj[key] = value;
+    });
+    
+    const location = headResponse.headers.get('location');
+    const isRedirect = headResponse.status >= 300 && headResponse.status < 400;
+    
+    // If not a redirect, try GET to see if body contains redirect info
+    let bodyPreview: string | null = null;
+    if (!isRedirect && headResponse.status === 200) {
+      try {
+        const getResponse = await fetch(url, {
+          method: 'GET',
+          redirect: 'manual',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://www.gaspedaal.nl/',
+          },
+        });
+        const text = await getResponse.text();
+        bodyPreview = text.substring(0, 500);
+        
+        // Check for JSON response with URL
+        if (text.startsWith('{')) {
+          try {
+            const json = JSON.parse(text);
+            if (json.url || json.redirect || json.location) {
+              return {
+                pattern: url,
+                status: getResponse.status,
+                location: json.url || json.redirect || json.location,
+                isRedirect: true,
+                headers: headersObj,
+                bodyPreview,
+                error: null,
+              };
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+    
+    return {
+      pattern: url,
+      status: headResponse.status,
+      location,
+      isRedirect,
+      headers: headersObj,
+      bodyPreview,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      pattern: url,
+      status: 0,
+      location: null,
+      isRedirect: false,
+      headers: {},
+      bodyPreview: null,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+// ===== GASPEDAAL PAGE LINK EXTRACTION =====
+async function extractLinksFromGaspedaalPage(
+  occasionId: string,
+  apiKey: string
+): Promise<{
+  success: boolean;
+  html?: string;
+  links?: string[];
+  externalLinks?: Array<{ source: string; url: string }>;
+  outboundSources?: string[];
+  error?: string;
+}> {
+  const url = `https://www.gaspedaal.nl/occasion/${occasionId}`;
+  
+  try {
+    const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        url,
+        formats: ['html', 'links'],
+        onlyMainContent: false,
+        waitFor: 8000,
+      }),
+    });
+    
+    if (!response.ok) {
+      return { success: false, error: `Firecrawl HTTP ${response.status}` };
+    }
+    
+    const data = await response.json();
+    const html = data.data?.html || data.html || '';
+    const links = data.data?.links || data.links || [];
+    
+    // Extract external portal links
+    const externalLinks: Array<{ source: string; url: string }> = [];
+    const seenUrls = new Set<string>();
+    
+    // Pattern 1: Direct href links
+    const hrefPattern = /href="(https?:\/\/(?!www\.gaspedaal\.nl)[^"]+)"/gi;
+    let match;
+    while ((match = hrefPattern.exec(html)) !== null) {
+      const foundUrl = match[1];
+      if (!seenUrls.has(foundUrl)) {
+        seenUrls.add(foundUrl);
+        const source = detectLinkSource(foundUrl);
+        if (source !== 'other') {
+          externalLinks.push({ source, url: foundUrl });
+        }
+      }
+    }
+    
+    // Pattern 2: data-url attributes
+    const dataUrlPattern = /data-(?:url|href|redirect)="(https?:\/\/[^"]+)"/gi;
+    while ((match = dataUrlPattern.exec(html)) !== null) {
+      const foundUrl = match[1];
+      if (!foundUrl.includes('gaspedaal.nl') && !seenUrls.has(foundUrl)) {
+        seenUrls.add(foundUrl);
+        const source = detectLinkSource(foundUrl);
+        externalLinks.push({ source, url: foundUrl });
+      }
+    }
+    
+    // Pattern 3: JSON embedded URLs
+    const jsonUrlPattern = /"(?:url|href|redirect|link)":\s*"(https?:\/\/[^"]+)"/gi;
+    while ((match = jsonUrlPattern.exec(html)) !== null) {
+      const foundUrl = match[1];
+      if (!foundUrl.includes('gaspedaal.nl') && !seenUrls.has(foundUrl)) {
+        seenUrls.add(foundUrl);
+        const source = detectLinkSource(foundUrl);
+        externalLinks.push({ source, url: foundUrl });
+      }
+    }
+    
+    // Pattern 4: Check Firecrawl links array
+    for (const link of links) {
+      if (!link.includes('gaspedaal.nl') && !seenUrls.has(link)) {
+        const source = detectLinkSource(link);
+        if (source !== 'other') {
+          seenUrls.add(link);
+          externalLinks.push({ source, url: link });
+        }
+      }
+    }
+    
+    // Extract outbound sources from "Bekijk deze auto op:" text
+    const outboundSources: string[] = [];
+    const bekijkMatch = html.match(/Bekijk\s+(?:deze\s+auto|dit\s+voertuig)\s+op[:\s]*([^<]+)/i);
+    if (bekijkMatch) {
+      const sources = bekijkMatch[1].split(/[,\s]+/).filter((s: string) => s.length > 2);
+      for (const s of sources) {
+        const normalized = s.toLowerCase().trim();
+        if (['dealersite', 'autotrack', 'autoscout24', 'anwb', 'marktplaats'].includes(normalized)) {
+          outboundSources.push(normalized);
+        }
+      }
+    }
+    
+    return {
+      success: true,
+      html,
+      links,
+      externalLinks,
+      outboundSources,
+    };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+function detectLinkSource(url: string): string {
+  if (url.includes('autotrack')) return 'autotrack';
+  if (url.includes('autoscout24')) return 'autoscout24';
+  if (url.includes('anwb.nl')) return 'anwb';
+  if (url.includes('marktplaats')) return 'marktplaats';
+  if (url.includes('autowereld')) return 'autowereld';
+  if (url.includes('autoweek')) return 'autoweek';
+  if (url.includes('viabovag')) return 'viabovag';
+  
+  const knownPortals = ['gaspedaal.nl', 'autotrack.nl', 'autoscout24.nl', 'anwb.nl', 
+                        'marktplaats.nl', 'autowereld.nl', 'autoweek.nl', 'viabovag.nl',
+                        'apple.com', 'google.com', 'facebook.com', 'instagram.com',
+                        'youtube.com', 'twitter.com', 'linkedin.com'];
+  const isKnownPortal = knownPortals.some(domain => url.includes(domain));
+  
+  if (!isKnownPortal && url.startsWith('http')) {
+    return 'dealersite';
+  }
+  
+  return 'other';
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -20,15 +273,122 @@ serve(async (req) => {
     }
 
     // Parse request body for optional test mode
-    let testMode = 'index'; // 'index' or 'detail'
+    let testMode = 'index'; // 'index', 'detail', or 'redirect'
     let testOccasionId: string | null = null;
     try {
       const body = await req.json();
-      // Support both naming conventions
       testMode = body.testMode || body.mode || 'index';
       testOccasionId = body.testOccasionId || body.occasionId || null;
       console.log(`[DEBUG] Request: testMode=${testMode}, testOccasionId=${testOccasionId}`);
     } catch {}
+
+    // ===== REDIRECT TEST MODE (NEW!) =====
+    if (testMode === 'redirect') {
+      if (!testOccasionId) {
+        return new Response(
+          JSON.stringify({ error: 'testOccasionId required for redirect test' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      console.log(`[DEBUG] Testing redirect patterns for occasion ID: ${testOccasionId}`);
+      
+      const results: Array<{
+        patternName: string;
+        source: string;
+        result: {
+          pattern: string;
+          status: number;
+          location: string | null;
+          isRedirect: boolean;
+          headers: Record<string, string>;
+          bodyPreview: string | null;
+          error: string | null;
+        };
+      }> = [];
+      
+      // Test all patterns with all sources
+      for (const pattern of REDIRECT_PATTERNS) {
+        for (const source of SOURCES_TO_TEST) {
+          console.log(`[DEBUG] Testing pattern: ${pattern.name} with source: ${source}`);
+          const result = await testRedirectPattern(pattern.template, testOccasionId, source);
+          results.push({
+            patternName: pattern.name,
+            source,
+            result,
+          });
+          
+          // Add small delay to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+      
+      // Also try to extract links from the Gaspedaal page itself
+      console.log(`[DEBUG] Extracting links from Gaspedaal occasion page`);
+      const pageLinks = await extractLinksFromGaspedaalPage(testOccasionId, apiKey);
+      
+      // Summarize successful patterns
+      const successfulRedirects = results.filter(r => 
+        r.result.isRedirect && 
+        r.result.location && 
+        !r.result.location.includes('gaspedaal.nl')
+      );
+      
+      const successfulJsonResponses = results.filter(r =>
+        r.result.status === 200 &&
+        r.result.location &&
+        !r.result.location.includes('gaspedaal.nl')
+      );
+      
+      return new Response(
+        JSON.stringify({
+          success: true,
+          mode: 'redirect',
+          occasionId: testOccasionId,
+          
+          // Summary
+          summary: {
+            totalPatternsTested: results.length,
+            successfulRedirects: successfulRedirects.length,
+            successfulJsonResponses: successfulJsonResponses.length,
+            pageLinksFound: pageLinks.externalLinks?.length || 0,
+            recommendation: successfulRedirects.length > 0 
+              ? `SUCCESS: Found ${successfulRedirects.length} working redirect patterns!`
+              : pageLinks.externalLinks && pageLinks.externalLinks.length > 0
+                ? `PARTIAL: No redirects, but found ${pageLinks.externalLinks.length} links on page`
+                : 'FAILED: No external URLs found. Need alternative approach.',
+          },
+          
+          // Successful redirects
+          successfulRedirects: successfulRedirects.map(r => ({
+            pattern: r.patternName,
+            source: r.source,
+            url: r.result.pattern,
+            externalUrl: r.result.location,
+          })),
+          
+          // Links from page scrape
+          pageLinks: {
+            success: pageLinks.success,
+            externalLinks: pageLinks.externalLinks,
+            outboundSources: pageLinks.outboundSources,
+            totalLinksOnPage: pageLinks.links?.length || 0,
+            error: pageLinks.error,
+          },
+          
+          // Full results for debugging
+          allResults: results.map(r => ({
+            patternName: r.patternName,
+            source: r.source,
+            status: r.result.status,
+            isRedirect: r.result.isRedirect,
+            location: r.result.location,
+            error: r.result.error,
+          })),
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     // If testing a specific occasion detail page
     if (testMode === 'detail' && testOccasionId) {
@@ -46,7 +406,7 @@ serve(async (req) => {
           url: detailUrl,
           formats: ['html', 'links', 'markdown'],
           onlyMainContent: false,
-          waitFor: 10000, // Increased from 5000 to 10000ms
+          waitFor: 10000,
         }),
       });
 
@@ -67,54 +427,27 @@ serve(async (req) => {
       console.log('[DEBUG] Detail page HTML length:', html.length);
       console.log('[DEBUG] Detail page Markdown length:', markdown.length);
       
-      // Check if page actually loaded (look for SPA skeleton indicators)
+      // Check if page actually loaded
       const isSkeletonOnly = html.includes('overflow: hidden') && 
                              html.length < 200000 && 
                              !html.includes('data-testid="occasion-detail"');
       
-      // Check for actual vehicle content in markdown
       const hasVehicleContent = markdown.includes('€') || 
                                 markdown.includes('km') || 
                                 markdown.includes('Kenteken') ||
                                 markdown.includes('Bouwjaar');
       
-      // Extract specs from detail page - try multiple patterns
+      // Extract specs from detail page
       const specsTable: Record<string, string> = {};
-      
-      // Pattern 1: Traditional table rows
       const tableRowPattern = /<tr[^>]*>[\s\S]*?<t[hd][^>]*>([^<]+)<\/t[hd]>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<\/tr>/gi;
       let match;
       while ((match = tableRowPattern.exec(html)) !== null) {
         specsTable[match[1].trim()] = match[2].trim();
       }
       
-      // Pattern 2: dl/dt/dd definition lists
       const dlPattern = /<dt[^>]*>([^<]+)<\/dt>\s*<dd[^>]*>([^<]+)<\/dd>/gi;
       while ((match = dlPattern.exec(html)) !== null) {
         specsTable[match[1].trim()] = match[2].trim();
-      }
-      
-      // Pattern 3: Label + value spans
-      const labelValuePattern = /<span[^>]*class="[^"]*label[^"]*"[^>]*>([^<]+)<\/span>\s*[^<]*<span[^>]*>([^<]+)<\/span>/gi;
-      while ((match = labelValuePattern.exec(html)) !== null) {
-        specsTable[match[1].trim()] = match[2].trim();
-      }
-      
-      // Extract specs from markdown (cleaner)
-      const markdownSpecs: Record<string, string> = {};
-      const mdLinePattern = /\*\*([^*]+)\*\*:\s*([^\n]+)/g;
-      while ((match = mdLinePattern.exec(markdown)) !== null) {
-        markdownSpecs[match[1].trim()] = match[2].trim();
-      }
-      
-      // Pipe-separated markdown tables
-      const mdTablePattern = /\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|/g;
-      while ((match = mdTablePattern.exec(markdown)) !== null) {
-        const key = match[1].trim();
-        const value = match[2].trim();
-        if (key && value && key !== '---' && !key.includes('---')) {
-          markdownSpecs[key] = value;
-        }
       }
       
       // Extract external portal links
@@ -126,7 +459,6 @@ serve(async (req) => {
         }
       }
       
-      // Also check Firecrawl links array for external URLs
       const externalFromFirecrawl = (links as string[]).filter((url: string) => 
         !url.includes('gaspedaal.nl') && 
         (url.includes('autotrack') || url.includes('autoscout') || 
@@ -134,7 +466,6 @@ serve(async (req) => {
          url.includes('dealer') || url.includes('occasion'))
       );
       
-      // Categorize external links
       const portalLinks = externalLinks.filter(url => 
         url.includes('autotrack') || 
         url.includes('autoscout') || 
@@ -144,7 +475,7 @@ serve(async (req) => {
         url.includes('viabovag')
       );
       
-      // Extract license plate - improved patterns
+      // Extract license plate
       const licensePlatePatterns = [
         /kenteken[:\s]*<[^>]*>([A-Z0-9]{1,3}[-\s]?[A-Z0-9]{2,3}[-\s]?[A-Z0-9]{1,2})</i,
         /Kenteken[:\s]*([A-Z0-9]{1,3}[-\s]?[A-Z0-9]{2,3}[-\s]?[A-Z0-9]{1,2})/i,
@@ -153,7 +484,6 @@ serve(async (req) => {
         /(\d{1,3}[-\s]?[A-Z]{2,3}[-\s]?[A-Z0-9]{1,2})/,
       ];
       let licensePlate: string | null = null;
-      // Try HTML first
       for (const pattern of licensePlatePatterns) {
         const lpMatch = html.match(pattern);
         if (lpMatch && lpMatch[1]) {
@@ -161,7 +491,6 @@ serve(async (req) => {
           break;
         }
       }
-      // Try markdown if not found
       if (!licensePlate) {
         const mdPlateMatch = markdown.match(/Kenteken[:\s]*([A-Z0-9-]+)/i);
         if (mdPlateMatch) {
@@ -169,19 +498,15 @@ serve(async (req) => {
         }
       }
       
-      // Extract options section
-      let optionsHtml: string | null = null;
+      // Extract options
       let optionsList: string[] = [];
       const optionsSectionPatterns = [
         /uitrusting[^<]*?<[^>]*>([\s\S]*?)<\/(?:div|section|ul)>/i,
         /opties[^<]*?<[^>]*>([\s\S]*?)<\/(?:div|section|ul)>/i,
-        /class="[^"]*options[^"]*"[^>]*>([\s\S]*?)<\/(?:div|section)>/i,
-        /class="[^"]*equipment[^"]*"[^>]*>([\s\S]*?)<\/(?:div|section)>/i,
       ];
       for (const pattern of optionsSectionPatterns) {
         const optMatch = html.match(pattern);
         if (optMatch && optMatch[1] && optMatch[1].length > 20) {
-          optionsHtml = optMatch[1].substring(0, 2000);
           const listItems = optMatch[1].match(/<li[^>]*>([^<]+)<\/li>/gi);
           if (listItems) {
             optionsList = listItems.map((item: string) => item.replace(/<[^>]+>/g, '').trim()).filter((item: string) => item.length > 0);
@@ -189,21 +514,6 @@ serve(async (req) => {
           break;
         }
       }
-      
-      // Extract options from markdown
-      const mdOptionsMatch = markdown.match(/(?:Uitrusting|Opties|Accessoires)[:\s]*([\s\S]*?)(?:\n\n|$)/i);
-      const markdownOptions: string[] = [];
-      if (mdOptionsMatch) {
-        const optLines = mdOptionsMatch[1].split('\n').filter((l: string) => l.trim().startsWith('-') || l.trim().startsWith('•'));
-        for (const line of optLines) {
-          const opt = line.replace(/^[-•*]\s*/, '').trim();
-          if (opt.length > 2) markdownOptions.push(opt);
-        }
-      }
-      
-      // Extract sample of the page content
-      const sampleContent = html.substring(0, 5000);
-      const markdownSample = markdown.substring(0, 3000);
       
       return new Response(
         JSON.stringify({
@@ -215,7 +525,6 @@ serve(async (req) => {
           markdownLength: markdown.length,
           linksFromFirecrawl: links.length,
           
-          // Rendering status
           renderingStatus: {
             isSkeletonOnly,
             hasVehicleContent,
@@ -226,29 +535,20 @@ serve(async (req) => {
                 : 'Page rendered but no vehicle data found'
           },
           
-          // Key extractions - HTML
           specsTableCount: Object.keys(specsTable).length,
           specsTable,
           licensePlate,
           optionsCount: optionsList.length,
           optionsList: optionsList.slice(0, 20),
           
-          // Key extractions - Markdown
-          markdownSpecsCount: Object.keys(markdownSpecs).length,
-          markdownSpecs,
-          markdownOptionsCount: markdownOptions.length,
-          markdownOptions: markdownOptions.slice(0, 20),
-          
-          // External links (crucial for two-phase scraping)
           externalLinksCount: externalLinks.length,
           externalFromFirecrawlCount: externalFromFirecrawl.length,
           portalLinks,
           externalLinksSample: externalLinks.slice(0, 10),
           externalFromFirecrawl: externalFromFirecrawl.slice(0, 10),
           
-          // Raw content samples
-          sampleContent,
-          markdownSample,
+          sampleContent: html.substring(0, 5000),
+          markdownSample: markdown.substring(0, 3000),
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
@@ -289,8 +589,7 @@ serve(async (req) => {
     console.log('[DEBUG] HTML length:', html.length);
     console.log('[DEBUG] Links count:', links.length);
     
-    // ===== OCCASION ID EXTRACTION (NEW!) =====
-    // Pattern 1: id="oc129649001" on listing cards
+    // Extract occasion IDs
     const occasionIdPattern = /id="oc(\d+)"/g;
     const occasionIds: string[] = [];
     let match;
@@ -301,7 +600,7 @@ serve(async (req) => {
     }
     console.log(`[DEBUG] Found ${occasionIds.length} occasion IDs`);
     
-    // Pattern 2: data-id="123456" or data-occasion-id="123456"
+    // Pattern 2: data-id="123456"
     const dataIdPattern = /data-(?:occasion-)?id="(\d{6,12})"/g;
     const dataIds: string[] = [];
     while ((match = dataIdPattern.exec(html)) !== null) {
@@ -310,15 +609,12 @@ serve(async (req) => {
       }
     }
     
-    // Construct sample Gaspedaal detail URLs
     const sampleDetailUrls = occasionIds.slice(0, 5).map(id => ({
       occasionId: id,
       gaspedaalDetailUrl: `https://www.gaspedaal.nl/occasion/${id}`,
     }));
     
-    // ===== ENHANCED ANALYSIS =====
-    
-    // 1. Parse __NEXT_DATA__ completely
+    // Parse __NEXT_DATA__
     let nextDataAnalysis: any = { found: false };
     const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
     if (nextDataMatch) {
@@ -332,11 +628,6 @@ serve(async (req) => {
           listingsCount: pageProps.listings?.length || 0,
           sampleListing: pageProps.listings?.[0] ? {
             keys: Object.keys(pageProps.listings[0]),
-            hasUrl: 'url' in pageProps.listings[0],
-            hasId: 'id' in pageProps.listings[0],
-            hasSlug: 'slug' in pageProps.listings[0],
-            urlValue: pageProps.listings[0].url || pageProps.listings[0].slug || pageProps.listings[0].id || 'NO_URL_FOUND',
-            outboundLinks: pageProps.listings[0].outboundLinks || pageProps.listings[0].externalLinks || 'NONE',
             fullSample: JSON.stringify(pageProps.listings[0]).substring(0, 2000),
           } : null,
         };
@@ -345,7 +636,7 @@ serve(async (req) => {
       }
     }
     
-    // 2. Find occasion links in HTML
+    // Find occasion links in HTML
     const occasionLinkPattern = /href="(\/occasion\/\d+[^"]*)"/gi;
     const occasionLinksInHtml: string[] = [];
     while ((match = occasionLinkPattern.exec(html)) !== null) {
@@ -354,7 +645,7 @@ serve(async (req) => {
       }
     }
     
-    // 3. Extract first listing card with occasion ID for inspection
+    // Extract sample listing card
     let sampleListingCard = '';
     const firstOccasionIdIndex = html.indexOf('id="oc');
     if (firstOccasionIdIndex > -1) {
@@ -363,7 +654,7 @@ serve(async (req) => {
       sampleListingCard = html.substring(cardStart, cardEnd);
     }
     
-    // 4. Check for external URLs (autotrack, autoscout, etc) anywhere in the HTML
+    // Check for external URLs
     const externalUrlPattern = /href="(https?:\/\/(?!www\.gaspedaal\.nl)[^"]+)"/gi;
     const externalUrls: string[] = [];
     while ((match = externalUrlPattern.exec(html)) !== null) {
@@ -372,7 +663,6 @@ serve(async (req) => {
       }
     }
     
-    // Categorize external URLs
     const externalByDomain: Record<string, string[]> = {};
     for (const extUrl of externalUrls) {
       try {
@@ -389,7 +679,6 @@ serve(async (req) => {
         htmlLength: html.length,
         linksFromFirecrawl: links.length,
         
-        // ===== NEW: OCCASION ID EXTRACTION =====
         occasionIdExtraction: {
           totalFound: occasionIds.length,
           pattern: 'id="oc{ID}"',
@@ -397,26 +686,19 @@ serve(async (req) => {
           additionalDataIds: dataIds.slice(0, 5),
           sampleDetailUrls,
           recommendation: occasionIds.length > 0 
-            ? `SUCCESS: Found ${occasionIds.length} occasion IDs. Use https://www.gaspedaal.nl/occasion/{ID} for detail scrapes.`
-            : 'FAILED: No occasion IDs found. Need alternative approach.',
+            ? `SUCCESS: Found ${occasionIds.length} occasion IDs. Use testMode='redirect' to test URL resolution.`
+            : 'FAILED: No occasion IDs found.',
         },
         
-        // Occasion links found as href
         occasionLinksInHtml: occasionLinksInHtml.slice(0, 10),
-        
-        // __NEXT_DATA__ analysis
         nextDataAnalysis,
         
-        // External URL analysis
         externalUrlsCount: externalUrls.length,
         externalByDomain: Object.fromEntries(
           Object.entries(externalByDomain).map(([k, v]) => [k, v.slice(0, 3)])
         ),
         
-        // Sample content for inspection
         sampleListingCard: sampleListingCard.substring(0, 4000),
-        
-        // Original analysis
         hasReactRoot: html.includes('__next') || html.includes('__NEXT_DATA__'),
         titleCount: (html.match(/isOccTitle/g) || []).length,
       }),
