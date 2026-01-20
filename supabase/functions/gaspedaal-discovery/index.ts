@@ -1099,6 +1099,291 @@ async function resolveGaspedaalRedirect(
   return resolvedLinks;
 }
 
+// ===== GOLDEN MASTERPLAN v6: AUTOTRACK URL GENERATOR =====
+interface AutoTrackSearchResult {
+  title: string;
+  price: number;
+  year: number;
+  mileage: number;
+  detailUrl: string;
+  dealerName: string | null;
+  matchScore: number;
+}
+
+function buildAutoTrackSearchUrl(
+  make: string, 
+  model: string, 
+  year: number, 
+  price: number,
+  mileage: number
+): string {
+  // Normalize make/model for AutoTrack URL structure
+  const makeSlug = make.toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  
+  const modelSlug = model.toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  
+  const params = new URLSearchParams({
+    bouwjaar_van: year.toString(),
+    bouwjaar_tot: year.toString(),
+    prijs_van: Math.max(0, price - 750).toString(),
+    prijs_tot: (price + 750).toString(),
+  });
+  
+  // Add mileage filter if available and reasonable
+  if (mileage && mileage > 0) {
+    params.set('kmstand_tot', (mileage + 10000).toString());
+  }
+  
+  return `https://www.autotrack.nl/auto/${makeSlug}/${modelSlug}?${params.toString()}`;
+}
+
+// ===== GOLDEN MASTERPLAN v6: AUTOTRACK SEARCH PARSER =====
+function parseAutoTrackSearchResults(html: string): AutoTrackSearchResult[] {
+  const results: AutoTrackSearchResult[] = [];
+  const sanitized = sanitizeReactHtml(html);
+  
+  // AutoTrack uses various card patterns - try multiple approaches
+  const cardPatterns = [
+    // Pattern 1: Standard listing cards
+    /<article[^>]*class="[^"]*(?:listing|search-result|vehicle-card)[^"]*"[^>]*>([\s\S]*?)<\/article>/gi,
+    // Pattern 2: Data-testid based
+    /<div[^>]*data-testid="[^"]*listing[^"]*"[^>]*>([\s\S]*?)<\/div>(?=<div[^>]*data-testid)/gi,
+    // Pattern 3: List items
+    /<li[^>]*class="[^"]*(?:listing|result)[^"]*"[^>]*>([\s\S]*?)<\/li>/gi,
+    // Pattern 4: Anchor-based cards
+    /<a[^>]*href="(\/auto\/[^"]*\/[^"]*\/\d+)"[^>]*class="[^"]*(?:card|listing)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi,
+  ];
+  
+  // Try to find cards with any pattern
+  let foundCards: string[] = [];
+  for (const pattern of cardPatterns) {
+    const matches = sanitized.match(pattern);
+    if (matches && matches.length > 0) {
+      foundCards = matches;
+      console.log(`[AUTOTRACK PARSE] Found ${matches.length} cards with pattern`);
+      break;
+    }
+  }
+  
+  // Fallback: Look for detail URLs directly
+  const detailUrlPattern = /href="(https?:\/\/(?:www\.)?autotrack\.nl\/auto\/[^\/]+\/[^\/]+\/(\d+)[^"]*)"/gi;
+  const allUrls: Array<{ url: string; id: string }> = [];
+  let urlMatch;
+  while ((urlMatch = detailUrlPattern.exec(sanitized)) !== null) {
+    allUrls.push({ url: urlMatch[1], id: urlMatch[2] });
+  }
+  
+  console.log(`[AUTOTRACK PARSE] Found ${allUrls.length} detail URLs in page`);
+  
+  // For each found URL, try to extract surrounding data
+  const processedIds = new Set<string>();
+  
+  for (const { url, id } of allUrls) {
+    if (processedIds.has(id)) continue;
+    processedIds.add(id);
+    
+    // Try to find the section containing this URL and extract data
+    const urlIndex = sanitized.indexOf(url);
+    if (urlIndex === -1) continue;
+    
+    // Get surrounding context (2000 chars before and after)
+    const contextStart = Math.max(0, urlIndex - 2000);
+    const contextEnd = Math.min(sanitized.length, urlIndex + 2000);
+    const context = sanitized.substring(contextStart, contextEnd);
+    
+    // Extract price - look for Euro amounts
+    let price: number | null = null;
+    const pricePatterns = [
+      /€\s*([\d.,]+)/i,
+      /(\d{1,3}(?:\.\d{3})*)\s*(?:€|euro)/i,
+      /prijs[^<]*?(\d{1,3}(?:[.,]\d{3})*)/i,
+    ];
+    for (const pp of pricePatterns) {
+      const priceMatch = context.match(pp);
+      if (priceMatch) {
+        const cleanPrice = priceMatch[1].replace(/\./g, '').replace(',', '.');
+        price = parseInt(cleanPrice, 10);
+        if (!isNaN(price) && price > 1000 && price < 500000) break;
+        price = null;
+      }
+    }
+    
+    // Extract year
+    let year: number | null = null;
+    const yearMatch = context.match(/\b(20\d{2})\b/);
+    if (yearMatch) {
+      year = parseInt(yearMatch[1], 10);
+    }
+    
+    // Extract mileage
+    let mileage: number | null = null;
+    const kmPatterns = [
+      /(\d{1,3}(?:\.\d{3})*)\s*km/i,
+      /km[^<]*?(\d{1,3}(?:[.,]\d{3})*)/i,
+    ];
+    for (const kp of kmPatterns) {
+      const kmMatch = context.match(kp);
+      if (kmMatch) {
+        const cleanKm = kmMatch[1].replace(/\./g, '').replace(',', '');
+        mileage = parseInt(cleanKm, 10);
+        if (!isNaN(mileage) && mileage > 0 && mileage < 1000000) break;
+        mileage = null;
+      }
+    }
+    
+    // Extract title
+    let title = '';
+    const titlePatterns = [
+      /<h[123][^>]*>([^<]+)<\/h[123]>/i,
+      /<span[^>]*class="[^"]*title[^"]*"[^>]*>([^<]+)<\/span>/i,
+    ];
+    for (const tp of titlePatterns) {
+      const titleMatch = context.match(tp);
+      if (titleMatch) {
+        title = titleMatch[1].trim();
+        break;
+      }
+    }
+    
+    // Skip if missing critical data
+    if (!price || !year) {
+      console.log(`[AUTOTRACK PARSE] Skipping card with missing data: price=${price}, year=${year}`);
+      continue;
+    }
+    
+    results.push({
+      title,
+      price,
+      year,
+      mileage: mileage || 0,
+      detailUrl: url,
+      dealerName: null,
+      matchScore: 0,
+    });
+  }
+  
+  console.log(`[AUTOTRACK PARSE] Parsed ${results.length} valid results`);
+  return results;
+}
+
+// ===== GOLDEN MASTERPLAN v6: MATCH SCORING =====
+function calculatePortalMatchScore(
+  result: AutoTrackSearchResult, 
+  expected: { price: number; year: number; mileage: number }
+): number {
+  let score = 0;
+  
+  // Price match (max 50 points)
+  if (expected.price > 0) {
+    const priceDiff = Math.abs(result.price - expected.price) / expected.price;
+    if (priceDiff < 0.02) score += 50;        // <2% = perfect
+    else if (priceDiff < 0.05) score += 40;   // <5% = goed
+    else if (priceDiff < 0.10) score += 25;   // <10% = acceptabel
+    else if (priceDiff < 0.15) score += 10;   // <15% = zwak
+  }
+  
+  // Year exact match (30 points)
+  if (result.year === expected.year) {
+    score += 30;
+  } else if (Math.abs(result.year - expected.year) === 1) {
+    score += 15; // Off by 1 year is still okay
+  }
+  
+  // KM match (max 20 points)
+  if (expected.mileage > 0 && result.mileage > 0) {
+    const kmDiff = Math.abs(result.mileage - expected.mileage);
+    if (kmDiff < 1000) score += 20;
+    else if (kmDiff < 3000) score += 15;
+    else if (kmDiff < 5000) score += 10;
+    else if (kmDiff < 10000) score += 5;
+  } else if (expected.mileage === 0 || result.mileage === 0) {
+    // One is missing, give partial credit
+    score += 5;
+  }
+  
+  return score;
+}
+
+// ===== GOLDEN MASTERPLAN v6: PORTAL SEARCH ORCHESTRATOR =====
+async function findDetailUrlViaPortalSearch(
+  listing: IndexPageListing,
+  make: string,
+  model: string,
+  firecrawlKey: string,
+  safety: SafetyState,
+  dryRun: boolean
+): Promise<{ source: string; url: string; matchScore: number } | null> {
+  // Only proceed if we have required data for search
+  if (!make || !model || !listing.year || !listing.price) {
+    console.log(`[PORTAL SEARCH] Missing required data: make=${make}, model=${model}, year=${listing.year}, price=${listing.price}`);
+    return null;
+  }
+  
+  // Priority: AutoTrack first (most structured), then others
+  const searchUrl = buildAutoTrackSearchUrl(
+    make,
+    model,
+    listing.year,
+    listing.price,
+    listing.mileage || 0
+  );
+  
+  console.log(`[PORTAL SEARCH] Searching AutoTrack: ${searchUrl}`);
+  
+  // Scrape search results page (1 credit)
+  const searchHtml = await scrapeWithFirecrawl(searchUrl, firecrawlKey, safety, true, dryRun);
+  
+  if (!searchHtml) {
+    console.log(`[PORTAL SEARCH] Failed to scrape AutoTrack search page`);
+    return null;
+  }
+  
+  // Parse search results
+  const searchResults = parseAutoTrackSearchResults(searchHtml);
+  
+  if (searchResults.length === 0) {
+    console.log(`[PORTAL SEARCH] No results found on AutoTrack for ${make} ${model}`);
+    return null;
+  }
+  
+  // Calculate match scores
+  const expectedData = {
+    price: listing.price,
+    year: listing.year,
+    mileage: listing.mileage || 0,
+  };
+  
+  const scoredResults = searchResults
+    .map(r => ({
+      ...r,
+      matchScore: calculatePortalMatchScore(r, expectedData),
+    }))
+    .filter(r => r.matchScore >= 50) // Minimum threshold: 50 points
+    .sort((a, b) => b.matchScore - a.matchScore);
+  
+  console.log(`[PORTAL SEARCH] Scored ${scoredResults.length} matches above threshold (top score: ${scoredResults[0]?.matchScore || 0})`);
+  
+  if (scoredResults.length === 0) {
+    console.log(`[PORTAL SEARCH] No matches above threshold for ${make} ${model}`);
+    return null;
+  }
+  
+  const bestMatch = scoredResults[0];
+  console.log(`[PORTAL SEARCH] Best match: score=${bestMatch.matchScore}, price=${bestMatch.price}, year=${bestMatch.year}, km=${bestMatch.mileage}`);
+  
+  return {
+    source: 'autotrack',
+    url: bestMatch.detailUrl,
+    matchScore: bestMatch.matchScore,
+  };
+}
+
 // ===== SELECT BEST DETAIL URL (prioriteer dealersite) =====
 function selectBestDetailUrl(
   gaspedaalUrl: string,
@@ -2116,15 +2401,16 @@ async function processHealingQueue(
   stats: JobStats,
   dryRun: boolean
 ): Promise<void> {
-  console.log('[HEALING] Starting healing queue processing...');
+  console.log('[HEALING] Starting healing queue processing (v6 - with portal search)...');
   
   const now = new Date();
   const minTimeSinceLastAttempt = new Date(now.getTime() - HEALING_MIN_HOURS_BETWEEN_ATTEMPTS * 60 * 60 * 1000).toISOString();
   
   // Find incomplete listings that need re-scraping
+  // v6: Also fetch make, model, year, price, mileage for portal search
   const { data: healingCandidates, error } = await supabase
     .from('listings')
-    .select('id, url, canonical_url, outbound_links, detail_attempts, detail_scraped_at, detail_status, chosen_detail_source, detail_sources_tried, detail_best_score')
+    .select('id, url, canonical_url, outbound_links, outbound_sources, detail_attempts, detail_scraped_at, detail_status, chosen_detail_source, detail_sources_tried, detail_best_score, make, model, year, price, mileage')
     .eq('needs_detail_rescrape', true)
     .lt('detail_attempts', HEALING_MAX_RETRIES)
     .or(`detail_scraped_at.is.null,detail_scraped_at.lt.${minTimeSinceLastAttempt}`)
@@ -2147,19 +2433,68 @@ async function processHealingQueue(
     console.log(`[HEALING] Processing listing ${candidate.id} (attempt ${candidate.detail_attempts + 1}/${HEALING_MAX_RETRIES})`);
     
     const outboundLinks = candidate.outbound_links || [];
+    const outboundSources = candidate.outbound_sources || [];
     
     // GOLDEN MASTERPLAN v4: Check for untried better sources
     const triedSources = (candidate.detail_sources_tried || []).map((s: any) => s.source);
-    const availableSources = outboundLinks.map((l: any) => l.source);
     
-    // Find best untried source
+    // Find best untried source from existing links
     const priorityOrder = ['dealersite', 'autotrack', 'autoscout24', 'marktplaats', 'anwb'];
     let bestUntried = outboundLinks.find((l: any) => 
       !triedSources.includes(l.source) && priorityOrder.includes(l.source)
     );
     
     if (!bestUntried && outboundLinks.length > 0) {
-      bestUntried = outboundLinks[0];
+      bestUntried = outboundLinks.find((l: any) => !triedSources.includes(l.source));
+    }
+    
+    // ===== GOLDEN MASTERPLAN v6: TRY PORTAL SEARCH IF NO DIRECT LINKS =====
+    if (!bestUntried && outboundSources.includes('autotrack') && candidate.make && candidate.model && candidate.year && candidate.price) {
+      console.log(`[HEALING] No untried direct links, trying AutoTrack portal search for ${candidate.make} ${candidate.model}`);
+      
+      // Build a minimal listing object for portal search
+      const searchListing: IndexPageListing = {
+        url: candidate.url,
+        title: `${candidate.make} ${candidate.model}`,
+        price: candidate.price,
+        year: candidate.year,
+        mileage: candidate.mileage || 0,
+        fuelType: null,
+        transmission: null,
+        bodyType: null,
+        color: null,
+        doors: null,
+        dealerName: null,
+        dealerCity: null,
+        outboundSources: outboundSources,
+        outboundLinks: outboundLinks,
+        powerPk: null,
+        imageUrlThumbnail: null,
+        gaspedaalOccasionId: null,
+        gaspedaalDetailUrl: null,
+        availableSources: [],
+      };
+      
+      const portalMatch = await findDetailUrlViaPortalSearch(
+        searchListing,
+        candidate.make,
+        candidate.model,
+        firecrawlKey,
+        safety,
+        dryRun
+      );
+      
+      if (portalMatch) {
+        console.log(`[HEALING] Portal search found match: score=${portalMatch.matchScore}, url=${portalMatch.url}`);
+        bestUntried = {
+          source: portalMatch.source,
+          url: portalMatch.url,
+          foundAt: `healing_portal_search_score_${portalMatch.matchScore}`,
+        };
+        
+        // Add to outbound links for future reference
+        outboundLinks.push(bestUntried);
+      }
     }
     
     if (!bestUntried) {
@@ -2196,6 +2531,7 @@ async function processHealingQueue(
           last_detail_error: `Failed to scrape ${bestUntried.source}: No HTML returned`,
           detail_scraped_at: new Date().toISOString(),
           detail_sources_tried: newSourcesTried,
+          outbound_links: outboundLinks, // Save updated links with portal search result
         })
         .eq('id', candidate.id);
       stats.detailFailed++;
@@ -2232,6 +2568,7 @@ async function processHealingQueue(
         : null,
       detail_sources_tried: newSourcesTried,
       detail_best_score: newBestScore,
+      outbound_links: outboundLinks, // Save updated links
     };
     
     // Add extracted data
@@ -2245,6 +2582,11 @@ async function processHealingQueue(
       updateData.vin = detailData.vin;
       updateData.image_url_main = detailData.imageUrlMain;
       updateData.image_count = detailData.imageCount;
+      
+      // Parse options to array
+      if (detailData.optionsRawList && detailData.optionsRawList.length > 0) {
+        updateData.options_parsed = detailData.optionsRawList;
+      }
       
       if (detailData.licensePlate) {
         updateData.license_plate_hash = await hashLicensePlate(detailData.licensePlate);
@@ -2397,7 +2739,7 @@ async function runDiscoveryMode(
       );
       const isNewListing = !preliminaryLookup;
       
-      // GOLDEN MASTERPLAN v5: DETAIL SCRAPE DECISION - REDIRECT API PRIORITY
+      // GOLDEN MASTERPLAN v6: DETAIL SCRAPE DECISION - PORTAL SEARCH PRIORITY
       if (indexOnly) {
         if (isNewListing) {
           stats.skippedIndexOnly++;
@@ -2408,7 +2750,7 @@ async function runDiscoveryMode(
         const budgetCheck = checkSafetyLimits(safety, safetyConfig);
         
         if (!budgetCheck.shouldStop) {
-          // ===== PHASE 1: RESOLVE EXTERNAL URLS VIA GASPEDAAL REDIRECT API =====
+          // ===== PHASE 1: RESOLVE EXTERNAL URLS VIA GASPEDAAL REDIRECT API (legacy) =====
           if (listing.gaspedaalOccasionId && listing.outboundLinks.length === 0) {
             console.log(`[REDIRECT] No direct links found, trying redirect API for occasion ${listing.gaspedaalOccasionId}`);
             
@@ -2435,12 +2777,12 @@ async function runDiscoveryMode(
             }
           }
           
-          // ===== PHASE 2: SELECT BEST DETAIL URL (DEALERSITE PRIORITY) =====
+          // ===== PHASE 2: USE DIRECT OUTBOUND LINKS IF AVAILABLE =====
           if (listing.outboundLinks.length > 0) {
             const bestUrl = selectBestDetailUrl('', listing.outboundLinks);
             chosenDetailSource = bestUrl.source;
             chosenDetailUrl = bestUrl.url;
-            console.log(`[DETAIL] FIRST SEEN: Using ${bestUrl.source} -> ${bestUrl.url.substring(0, 80)}...`);
+            console.log(`[DETAIL] FIRST SEEN: Using direct link ${bestUrl.source} -> ${bestUrl.url.substring(0, 80)}...`);
             
             stats.detailAttempted++;
             detailHtml = await scrapeWithFirecrawl(bestUrl.url, firecrawlKey, safety, false, dryRun);
@@ -2469,9 +2811,51 @@ async function runDiscoveryMode(
               }
             }
             await delay(DELAY_BETWEEN_REQUESTS_MS);
+          }
+          
+          // ===== PHASE 3: PORTAL SEARCH (NEW - GOLDEN MASTERPLAN v6) =====
+          // If no direct links found OR direct scrape failed, search AutoTrack
+          if (!detailData && listing.outboundSources.includes('autotrack') && make && model) {
+            console.log(`[PORTAL SEARCH] No direct links or scrape failed, searching AutoTrack for ${make} ${model}`);
             
-          // ===== PHASE 3: TRY GASPEDAAL OCCASION PAGE AS LAST RESORT =====
-          } else if (listing.gaspedaalDetailUrl) {
+            const portalMatch = await findDetailUrlViaPortalSearch(
+              listing,
+              make,
+              model,
+              firecrawlKey,
+              safety,
+              dryRun
+            );
+            
+            if (portalMatch) {
+              console.log(`[PORTAL SEARCH] Found match with score ${portalMatch.matchScore}: ${portalMatch.url}`);
+              
+              // Add to outbound links for tracking
+              listing.outboundLinks.push({
+                source: portalMatch.source,
+                url: portalMatch.url,
+                foundAt: `portal_search_score_${portalMatch.matchScore}`,
+              });
+              
+              // Now scrape the detail page (1 more credit)
+              stats.detailAttempted++;
+              detailHtml = await scrapeWithFirecrawl(portalMatch.url, firecrawlKey, safety, false, dryRun);
+              
+              if (detailHtml) {
+                chosenDetailSource = portalMatch.source;
+                chosenDetailUrl = portalMatch.url;
+                detailData = extractDetailPageData(detailHtml);
+                console.log(`[PORTAL SEARCH] Extracted ${detailData.optionsRawList?.length || 0} options from ${portalMatch.source}`);
+              }
+              
+              await delay(DELAY_BETWEEN_REQUESTS_MS);
+            } else {
+              console.log(`[PORTAL SEARCH] No matching listing found on AutoTrack`);
+            }
+          }
+          
+          // ===== PHASE 4: GASPEDAAL OCCASION PAGE AS LAST RESORT =====
+          if (!detailData && listing.gaspedaalDetailUrl) {
             chosenDetailSource = 'gaspedaal_occasion';
             chosenDetailUrl = listing.gaspedaalDetailUrl;
             console.log(`[DETAIL] FALLBACK: Using Gaspedaal occasion page -> ${chosenDetailUrl}`);
@@ -2497,9 +2881,10 @@ async function runDiscoveryMode(
               console.log(`[DETAIL] Gaspedaal occasion page failed to scrape (SPA skeleton)`);
             }
             await delay(DELAY_BETWEEN_REQUESTS_MS);
-            
-          } else {
-            // NO DETAIL URL AVAILABLE
+          }
+          
+          // ===== PHASE 5: NO DETAIL URL AVAILABLE =====
+          if (!detailData && !listing.gaspedaalDetailUrl && listing.outboundLinks.length === 0) {
             detailStatus = 'no_links';
             stats.detailNoLinks++;
             console.log(`[DETAIL] NO LINKS: No occasion ID and no outbound links found`);
@@ -2669,6 +3054,11 @@ async function runDiscoveryMode(
           insertData.vin = detailData.vin;
           insertData.image_url_main = detailData.imageUrlMain;
           insertData.image_count = detailData.imageCount;
+          
+          // GOLDEN MASTERPLAN v6: Parse options to array
+          if (detailData.optionsRawList && detailData.optionsRawList.length > 0) {
+            insertData.options_parsed = detailData.optionsRawList;
+          }
         }
 
         const { data: newListing, error: insertError } = await supabase
@@ -2975,7 +3365,7 @@ serve(async (req) => {
       indexOnly = false,
     } = body;
     
-    console.log(`[START] Gaspedaal ${mode} job ${jobId} - GOLDEN MASTERPLAN v4`);
+    console.log(`[START] Gaspedaal ${mode} job ${jobId} - GOLDEN MASTERPLAN v6 (AutoTrack Portal Search)`);
     console.log(`[CONFIG] maxPages=${maxPages}, maxCredits=${maxCredits}, dryRun=${dryRun}, indexOnly=${indexOnly}`);
     console.log(`[CONFIG] targetMakes=${targetMakes.join(',') || 'all'}`);
 
@@ -3114,7 +3504,7 @@ serve(async (req) => {
       dryRun,
       indexOnly,
       duration: durationSeconds,
-      goldenMasterplanVersion: 'v4',
+      goldenMasterplanVersion: 'v6',
       stats: {
         ...stats,
         creditsUsed: dryRun ? 0 : safety.creditsUsedThisRun,
