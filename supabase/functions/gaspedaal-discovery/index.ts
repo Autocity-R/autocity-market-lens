@@ -62,6 +62,8 @@ interface IndexPageListing {
   // GOLDEN MASTERPLAN v4: Gaspedaal occasion ID extraction
   gaspedaalOccasionId: string | null;
   gaspedaalDetailUrl: string | null;
+  // GOLDEN MASTERPLAN v5: Available sources from "Bekijk deze auto op:" text
+  availableSources: string[];
   // Raw values for backup
   rawPrice?: string | null;
   rawYear?: string | null;
@@ -745,6 +747,8 @@ async function saveRawListing(
         vin_hash: vinHash,
         gaspedaal_occasion_id: listing.gaspedaalOccasionId,
         gaspedaal_detail_url: listing.gaspedaalDetailUrl,
+        // GOLDEN MASTERPLAN v5: Track available sources from "Bekijk deze auto op:"
+        available_sources: listing.availableSources.length > 0 ? listing.availableSources : null,
       };
       
       // Add detail data if available
@@ -796,6 +800,8 @@ async function saveRawListing(
         vin_hash: vinHash,
         gaspedaal_occasion_id: listing.gaspedaalOccasionId,
         gaspedaal_detail_url: listing.gaspedaalDetailUrl,
+        // GOLDEN MASTERPLAN v5: Track available sources from "Bekijk deze auto op:"
+        available_sources: listing.availableSources.length > 0 ? listing.availableSources : null,
       };
       
       // Add detail data if available
@@ -904,22 +910,48 @@ async function scrapeWithFirecrawl(
   }
 }
 
-// ===== GOLDEN MASTERPLAN v4: LINK SOURCE DETECTION =====
+// ===== GOLDEN MASTERPLAN v5: LINK SOURCE DETECTION WITH STRICT BLOCKLIST =====
+// NON-DEALER DOMAINS: These should NEVER be labeled as 'dealersite'
+const NON_DEALER_DOMAINS = [
+  // App stores & tech platforms
+  'apple.com', 'apps.apple.com', 'itunes.apple.com',
+  'play.google.com', 'google.com', 'google.nl', 'g.page',
+  'microsoft.com', 'amazon.com',
+  // Social media
+  'facebook.com', 'fb.com', 'instagram.com', 'twitter.com', 'x.com',
+  'linkedin.com', 'youtube.com', 'youtu.be', 'tiktok.com', 'pinterest.com',
+  'snapchat.com', 'whatsapp.com', 'wa.me', 'telegram.org', 't.me',
+  // Reviews & ratings
+  'trustpilot.com', 'yelp.com', 'tripadvisor.com', 'klantenvertellen.nl',
+  // Car portals (already known, not dealersites)
+  'gaspedaal.nl', 'autotrack.nl', 'autoscout24.nl', 'autoscout24.be',
+  'anwb.nl', 'marktplaats.nl', 'autowereld.nl', 'autoweek.nl', 'viabovag.nl',
+  'bovag.nl', 'autovandaag.nl', 'autovisie.nl', 'rdw.nl',
+  // Generic non-dealer
+  'wikipedia.org', 'github.com', 'cloudflare.com', 'cdn.', 'static.',
+];
+
 function detectLinkSource(url: string): string {
-  if (url.includes('autotrack')) return 'autotrack';
-  if (url.includes('autoscout24')) return 'autoscout24';
-  if (url.includes('anwb.nl')) return 'anwb';
-  if (url.includes('marktplaats')) return 'marktplaats';
-  if (url.includes('autowereld')) return 'autowereld';
-  if (url.includes('autoweek')) return 'autoweek';
-  if (url.includes('viabovag')) return 'viabovag';
+  const urlLower = url.toLowerCase();
   
-  // Known portals to exclude from dealersite
-  const knownPortals = ['gaspedaal.nl', 'autotrack.nl', 'autoscout24.nl', 'autoscout24.be', 
-                        'anwb.nl', 'marktplaats.nl', 'autowereld.nl', 'autoweek.nl', 'viabovag.nl'];
-  const isKnownPortal = knownPortals.some(domain => url.includes(domain));
+  // Known auto portals - check these first
+  if (urlLower.includes('autotrack')) return 'autotrack';
+  if (urlLower.includes('autoscout24')) return 'autoscout24';
+  if (urlLower.includes('anwb.nl')) return 'anwb';
+  if (urlLower.includes('marktplaats')) return 'marktplaats';
+  if (urlLower.includes('autowereld')) return 'autowereld';
+  if (urlLower.includes('autoweek')) return 'autoweek';
+  if (urlLower.includes('viabovag')) return 'viabovag';
+  if (urlLower.includes('bovag.nl')) return 'bovag';
   
-  if (!isKnownPortal && url.startsWith('http')) {
+  // Check blocklist - these are NEVER dealersites
+  const isBlocked = NON_DEALER_DOMAINS.some(domain => urlLower.includes(domain));
+  if (isBlocked) {
+    return 'other';
+  }
+  
+  // Must be http(s) and not blocked -> likely a dealersite
+  if (url.startsWith('http')) {
     return 'dealersite';
   }
   
@@ -1331,21 +1363,44 @@ function extractListingFromCardHtml(
     const outboundLinks = extractOutboundLinks(cardHtml);
     const outboundSources = [...new Set(outboundLinks.map(l => l.source))];
     
-    // Add sources from "Bekijk deze auto op:" text
-    const bekijkMatch = cardHtml.match(/Bekijk deze auto op:\s*([^<]+)/i);
-    if (bekijkMatch) {
-      const sources = bekijkMatch[1].split(',').map(s => s.trim().toLowerCase());
-      for (const source of sources) {
-        const normalized = source.includes('dealersite') ? 'dealersite' :
-                          source.includes('autotrack') ? 'autotrack' :
-                          source.includes('autoscout24') ? 'autoscout24' :
-                          source.includes('anwb') ? 'anwb' :
-                          source.includes('marktplaats') ? 'marktplaats' :
-                          source.length > 2 ? source : null;
-        if (normalized && !outboundSources.includes(normalized)) {
-          outboundSources.push(normalized);
+    // GOLDEN MASTERPLAN v5: Extract "Bekijk deze auto op:" as availableSources
+    // These are the REAL portal sources, not extracted URLs (which may be wrong/blocked)
+    const availableSources: string[] = [];
+    const bekijkPatterns = [
+      /Bekijk deze auto op:\s*([^<]+)/i,
+      /Bekijk\s+(?:op|bij|deze auto bij):\s*([^<]+)/i,
+      /Beschikbaar\s+(?:op|bij):\s*([^<]+)/i,
+    ];
+    
+    for (const pattern of bekijkPatterns) {
+      const bekijkMatch = cardHtml.match(pattern);
+      if (bekijkMatch) {
+        const sources = bekijkMatch[1].split(',').map(s => s.trim().toLowerCase());
+        for (const source of sources) {
+          const normalized = source.includes('dealersite') ? 'dealersite' :
+                            source.includes('autotrack') ? 'autotrack' :
+                            source.includes('autoscout24') ? 'autoscout24' :
+                            source.includes('autoscout') ? 'autoscout24' :
+                            source.includes('anwb') ? 'anwb' :
+                            source.includes('marktplaats') ? 'marktplaats' :
+                            source.includes('viabovag') ? 'viabovag' :
+                            source.includes('autowereld') ? 'autowereld' :
+                            source.includes('autoweek') ? 'autoweek' :
+                            source.length > 2 && source.length < 30 ? source : null;
+          if (normalized && !availableSources.includes(normalized)) {
+            availableSources.push(normalized);
+          }
+          // Also add to outboundSources for backwards compatibility
+          if (normalized && !outboundSources.includes(normalized)) {
+            outboundSources.push(normalized);
+          }
         }
+        break; // Found a match, stop looking
       }
+    }
+    
+    if (availableSources.length > 0) {
+      console.log(`[PARSE] Available sources from "Bekijk deze auto op:": ${availableSources.join(', ')}`);
     }
     
     // GOLDEN MASTERPLAN v4: Generate canonical URL 
@@ -1576,6 +1631,7 @@ function extractListingFromCardHtml(
       imageUrlThumbnail,
       gaspedaalOccasionId,
       gaspedaalDetailUrl,
+      availableSources,
       rawPrice,
       rawYear,
       rawMileage,
