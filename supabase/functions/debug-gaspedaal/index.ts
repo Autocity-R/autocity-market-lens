@@ -586,6 +586,60 @@ const PORTAL_SELECTORS = {
   ],
 };
 
+// ===== MODAL TRIGGER SELECTORS (for popup with portal links) =====
+const MODAL_TRIGGER_SELECTORS = [
+  // Primary: The "Bekijk op X websites" button/link
+  'a:has-text("websites")',
+  'button:has-text("websites")',
+  'a:has-text("Bekijk deze auto")',
+  'button:has-text("Bekijk")',
+  // Card/image clicks that may open modal
+  '[data-testid="occasion-card"]',
+  '.occasion-card',
+  '.vehicle-card',
+  'article[data-vehicle-id]',
+  // Main CTA buttons
+  '.cta-button',
+  '[data-testid="view-portals"]',
+  '.portal-section button',
+  '.outbound-trigger',
+  // Gallery/image that opens modal
+  '.main-image',
+  '.vehicle-image',
+  '.gallery-image',
+  'img[alt*="occasion"]',
+  // Generic portal section triggers
+  '.portal-link-trigger',
+  '[data-portal-trigger]',
+  'button[aria-haspopup="dialog"]',
+];
+
+// ===== MODAL LINK PATTERNS (for extracting links from opened modal) =====
+const MODAL_LINK_SELECTORS = [
+  // Dialog/Modal containers
+  '[role="dialog"] a[href^="http"]',
+  '.modal a[href^="http"]',
+  '[data-testid="portal-modal"] a',
+  // Overlay/popup content
+  '.overlay a[href^="http"]',
+  '.popup a[href^="http"]',
+  '[aria-modal="true"] a[href^="http"]',
+];
+
+// ===== PORTAL DOMAIN PATTERNS =====
+const PORTAL_DOMAINS = [
+  { domain: 'autowereld.nl', name: 'autowereld' },
+  { domain: 'autotrack.nl', name: 'autotrack' },
+  { domain: 'autoscout24.nl', name: 'autoscout24' },
+  { domain: 'autoscout24.com', name: 'autoscout24' },
+  { domain: 'marktplaats.nl', name: 'marktplaats' },
+  { domain: 'lease-auto.nl', name: 'lease_auto' },
+  { domain: 'anwb.nl', name: 'anwb' },
+  { domain: 'viabovag.nl', name: 'viabovag' },
+  { domain: 'autoweek.nl', name: 'autoweek' },
+  { domain: 'autovisie.nl', name: 'autovisie' },
+];
+
 // ===== FIRECRAWL ACTIONS HELPER =====
 async function scrapeWithFirecrawlActions(
   url: string,
@@ -732,6 +786,149 @@ function extractPortalButtonsFromHtml(html: string): Array<{
   return buttons;
 }
 
+// ===== EXTRACT PORTAL LINKS FROM MODAL HTML =====
+function extractPortalLinksFromModal(html: string): Array<{
+  portal: string;
+  url: string;
+  text: string;
+}> {
+  const links: Array<{ portal: string; url: string; text: string }> = [];
+  const seenUrls = new Set<string>();
+  
+  // Pattern 1: Direct href links to known portal domains
+  for (const { domain, name } of PORTAL_DOMAINS) {
+    const pattern = new RegExp(`href="(https?://[^"]*${domain.replace('.', '\\.')}[^"]*)"[^>]*>([^<]*)`, 'gi');
+    let match;
+    while ((match = pattern.exec(html)) !== null) {
+      const url = match[1];
+      if (!seenUrls.has(url)) {
+        seenUrls.add(url);
+        links.push({
+          portal: name,
+          url: url,
+          text: match[2].trim() || name,
+        });
+      }
+    }
+  }
+  
+  // Pattern 2: Any href in role="dialog" or modal sections
+  const dialogPattern = /<[^>]*(?:role="dialog"|class="[^"]*modal[^"]*")[^>]*>([\s\S]*?)<\/[^>]+>/gi;
+  let dialogMatch;
+  while ((dialogMatch = dialogPattern.exec(html)) !== null) {
+    const dialogContent = dialogMatch[1];
+    const linkPattern = /href="(https?:\/\/(?!www\.gaspedaal)[^"]+)"[^>]*>([^<]*)/gi;
+    let linkMatch;
+    while ((linkMatch = linkPattern.exec(dialogContent)) !== null) {
+      const url = linkMatch[1];
+      if (!seenUrls.has(url)) {
+        seenUrls.add(url);
+        // Detect portal from URL
+        let portal = 'dealersite';
+        for (const { domain, name } of PORTAL_DOMAINS) {
+          if (url.includes(domain)) {
+            portal = name;
+            break;
+          }
+        }
+        links.push({
+          portal,
+          url,
+          text: linkMatch[2].trim() || portal,
+        });
+      }
+    }
+  }
+  
+  // Pattern 3: Links in overlay/popup containers
+  const overlayPattern = /<[^>]*class="[^"]*(?:overlay|popup|drawer|sheet)[^"]*"[^>]*>([\s\S]*?)<\/[^>]+>/gi;
+  while ((dialogMatch = overlayPattern.exec(html)) !== null) {
+    const overlayContent = dialogMatch[1];
+    const linkPattern = /href="(https?:\/\/(?!www\.gaspedaal)[^"]+)"[^>]*>([^<]*)/gi;
+    let linkMatch;
+    while ((linkMatch = linkPattern.exec(overlayContent)) !== null) {
+      const url = linkMatch[1];
+      if (!seenUrls.has(url)) {
+        seenUrls.add(url);
+        let portal = 'dealersite';
+        for (const { domain, name } of PORTAL_DOMAINS) {
+          if (url.includes(domain)) {
+            portal = name;
+            break;
+          }
+        }
+        links.push({
+          portal,
+          url,
+          text: linkMatch[2].trim() || portal,
+        });
+      }
+    }
+  }
+  
+  // Pattern 4: Direct external links anywhere (fallback)
+  const directPattern = /href="(https?:\/\/(?!www\.gaspedaal\.nl)[^"]+)"[^>]*(?:data-portal="([^"]+)")?[^>]*>([^<]*)/gi;
+  let directMatch;
+  while ((directMatch = directPattern.exec(html)) !== null) {
+    const url = directMatch[1];
+    if (!seenUrls.has(url) && !url.includes('google') && !url.includes('facebook') && 
+        !url.includes('twitter') && !url.includes('instagram') && !url.includes('youtube')) {
+      // Check if it's a portal or dealer link
+      let portal = directMatch[2] || 'unknown';
+      if (portal === 'unknown') {
+        for (const { domain, name } of PORTAL_DOMAINS) {
+          if (url.includes(domain)) {
+            portal = name;
+            break;
+          }
+        }
+        // If still unknown and looks like a car dealer site
+        if (portal === 'unknown' && (url.includes('occasion') || url.includes('auto') || 
+            url.includes('dealer') || url.includes('cars') || url.includes('voertuig'))) {
+          portal = 'dealersite';
+        }
+      }
+      if (portal !== 'unknown') {
+        seenUrls.add(url);
+        links.push({
+          portal,
+          url,
+          text: directMatch[3]?.trim() || portal,
+        });
+      }
+    }
+  }
+  
+  return links;
+}
+
+// ===== CHECK IF HTML CONTAINS MODAL CONTENT =====
+function hasModalContent(html: string): { 
+  hasModal: boolean; 
+  indicators: string[];
+} {
+  const indicators: string[] = [];
+  
+  if (html.includes('role="dialog"')) indicators.push('role="dialog"');
+  if (html.includes('aria-modal="true"')) indicators.push('aria-modal="true"');
+  if (html.includes('class="modal')) indicators.push('class="modal..."');
+  if (html.includes('class="overlay')) indicators.push('class="overlay..."');
+  if (html.includes('class="popup')) indicators.push('class="popup..."');
+  if (html.includes('class="drawer')) indicators.push('class="drawer..."');
+  
+  // Check for portal-specific content that only appears in modal
+  for (const { domain } of PORTAL_DOMAINS) {
+    if (html.includes(domain)) {
+      indicators.push(`contains ${domain}`);
+    }
+  }
+  
+  return {
+    hasModal: indicators.length > 0,
+    indicators,
+  };
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -747,7 +944,7 @@ serve(async (req) => {
     }
 
     // Parse request body for optional test mode
-    let testMode = 'index'; // 'index', 'detail', 'redirect', 'proxy', or 'actions'
+    let testMode = 'index'; // 'index', 'detail', 'redirect', 'proxy', 'actions', or 'modal'
     let testOccasionId: string | null = null;
     let clickPortal: string | null = null; // For actions mode: which portal to click
     try {
@@ -928,6 +1125,216 @@ serve(async (req) => {
             htmlPreview: html.substring(0, 2000),
             markdownPreview: markdown.substring(0, 1500),
           },
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // ===== MODAL TRIGGER CLICK TEST MODE =====
+    // This mode simulates clicking on the modal trigger to open the popup with portal links
+    if (testMode === 'modal') {
+      if (!testOccasionId) {
+        return new Response(
+          JSON.stringify({ error: 'testOccasionId required for modal test' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      const occasionUrl = `https://www.gaspedaal.nl/occasion/${testOccasionId}`;
+      console.log(`[MODAL] Testing Modal Trigger Click on: ${occasionUrl}`);
+      
+      // STEP 1: Render page with extended wait for full hydration
+      console.log('[MODAL] Step 1: Full page hydration (12s wait)...');
+      const hydrationResult = await scrapeWithFirecrawlActions(occasionUrl, apiKey, [
+        { type: 'wait', milliseconds: 12000 }, // Extended wait for React hydration
+        { type: 'scroll', direction: 'down' },
+        { type: 'wait', milliseconds: 3000 },
+        { type: 'scroll', direction: 'up' },
+        { type: 'wait', milliseconds: 2000 },
+        { type: 'scrape' },
+      ]);
+      
+      if (!hydrationResult.success) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            mode: 'modal',
+            step: 'hydration',
+            occasionId: testOccasionId,
+            error: hydrationResult.error,
+            recommendation: 'Firecrawl failed to render page. Check API key and credits.',
+          }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      const initialHtml = hydrationResult.html || '';
+      console.log(`[MODAL] Initial HTML length: ${initialHtml.length}`);
+      
+      // Check initial HTML for modal content (before clicking)
+      const initialModalCheck = hasModalContent(initialHtml);
+      const initialLinks = extractPortalLinksFromModal(initialHtml);
+      console.log(`[MODAL] Initial modal indicators: ${initialModalCheck.indicators.length}, links: ${initialLinks.length}`);
+      
+      // STEP 2: Try each modal trigger selector
+      const triggerResults: Array<{
+        selector: string;
+        success: boolean;
+        htmlLength: number;
+        modalFound: boolean;
+        modalIndicators: string[];
+        portalLinksFound: Array<{ portal: string; url: string; text: string }>;
+        error?: string;
+      }> = [];
+      
+      let bestResult: {
+        selector: string;
+        portalLinks: Array<{ portal: string; url: string; text: string }>;
+      } | null = null;
+      
+      console.log(`[MODAL] Step 2: Testing ${MODAL_TRIGGER_SELECTORS.length} trigger selectors...`);
+      
+      for (const selector of MODAL_TRIGGER_SELECTORS) {
+        console.log(`[MODAL] Trying selector: ${selector}`);
+        
+        try {
+          const clickResult = await scrapeWithFirecrawlActions(occasionUrl, apiKey, [
+            { type: 'wait', milliseconds: 10000 }, // Wait for hydration
+            { type: 'scroll', direction: 'down' },
+            { type: 'wait', milliseconds: 2000 },
+            { type: 'click', selector: selector },
+            { type: 'wait', milliseconds: 5000 }, // Wait for modal animation
+            { type: 'scrape' },
+          ]);
+          
+          if (clickResult.success && clickResult.html) {
+            const clickedHtml = clickResult.html;
+            const modalCheck = hasModalContent(clickedHtml);
+            const portalLinks = extractPortalLinksFromModal(clickedHtml);
+            
+            const result = {
+              selector,
+              success: true,
+              htmlLength: clickedHtml.length,
+              modalFound: modalCheck.hasModal,
+              modalIndicators: modalCheck.indicators,
+              portalLinksFound: portalLinks,
+            };
+            triggerResults.push(result);
+            
+            // Check if we found more links than before (modal opened successfully)
+            if (portalLinks.length > initialLinks.length) {
+              console.log(`[MODAL] SUCCESS with selector: ${selector} - Found ${portalLinks.length} portal links!`);
+              if (!bestResult || portalLinks.length > bestResult.portalLinks.length) {
+                bestResult = {
+                  selector,
+                  portalLinks,
+                };
+              }
+            } else if (portalLinks.length > 0 && !bestResult) {
+              bestResult = { selector, portalLinks };
+            }
+          } else {
+            triggerResults.push({
+              selector,
+              success: false,
+              htmlLength: 0,
+              modalFound: false,
+              modalIndicators: [],
+              portalLinksFound: [],
+              error: clickResult.error || 'Click action failed',
+            });
+          }
+        } catch (error) {
+          console.error(`[MODAL] Error with selector ${selector}:`, error);
+          triggerResults.push({
+            selector,
+            success: false,
+            htmlLength: 0,
+            modalFound: false,
+            modalIndicators: [],
+            portalLinksFound: [],
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
+        }
+        
+        // Early exit if we found good results
+        if (bestResult && bestResult.portalLinks.length >= 2) {
+          console.log('[MODAL] Found sufficient portal links, stopping selector search');
+          break;
+        }
+      }
+      
+      // Summary
+      const successfulClicks = triggerResults.filter(r => r.success);
+      const clicksWithModal = triggerResults.filter(r => r.modalFound);
+      const clicksWithLinks = triggerResults.filter(r => r.portalLinksFound.length > 0);
+      
+      return new Response(
+        JSON.stringify({
+          success: true,
+          mode: 'modal',
+          occasionId: testOccasionId,
+          occasionUrl,
+          
+          // Initial state (before clicking)
+          initialState: {
+            htmlLength: initialHtml.length,
+            modalIndicators: initialModalCheck.indicators,
+            portalLinksFound: initialLinks,
+            recommendation: initialLinks.length > 0
+              ? `Found ${initialLinks.length} portal links in initial HTML - modal may already be present`
+              : 'No portal links in initial HTML - need to trigger modal',
+          },
+          
+          // Summary of trigger tests
+          triggerTestsSummary: {
+            totalSelectors: MODAL_TRIGGER_SELECTORS.length,
+            selectorsAttempted: triggerResults.length,
+            successfulClicks: successfulClicks.length,
+            clicksWithModal: clicksWithModal.length,
+            clicksWithLinks: clicksWithLinks.length,
+          },
+          
+          // Best result
+          bestResult: bestResult ? {
+            workingSelector: bestResult.selector,
+            portalLinksCount: bestResult.portalLinks.length,
+            portalLinks: bestResult.portalLinks,
+            recommendation: `Use selector "${bestResult.selector}" to trigger modal and extract ${bestResult.portalLinks.length} portal links`,
+          } : {
+            workingSelector: null,
+            portalLinksCount: 0,
+            portalLinks: [],
+            recommendation: 'No working modal trigger found. Try testMode=proxy or implement multi-portal search fallback.',
+          },
+          
+          // All trigger results for debugging
+          triggerResults: triggerResults.map(r => ({
+            selector: r.selector,
+            success: r.success,
+            htmlLength: r.htmlLength,
+            modalFound: r.modalFound,
+            modalIndicators: r.modalIndicators,
+            portalLinksCount: r.portalLinksFound.length,
+            error: r.error,
+          })),
+          
+          // Next steps
+          nextSteps: bestResult && bestResult.portalLinks.length > 0
+            ? [
+                `1. Working selector found: "${bestResult.selector}"`,
+                `2. Integrate into gaspedaal-discovery with this selector`,
+                `3. Extract portal URLs: ${bestResult.portalLinks.map(l => l.portal).join(', ')}`,
+              ]
+            : [
+                '1. No modal trigger worked - Gaspedaal may have WAF protection',
+                '2. Implement multi-portal search fallback (AutoTrack, AutoScout24)',
+                '3. Use outbound_sources from index page to determine which portals to search',
+              ],
+          
+          // Selectors that might work (for manual investigation)
+          selectorsToInvestigate: MODAL_TRIGGER_SELECTORS,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
