@@ -551,6 +551,187 @@ function detectLinkSource(url: string): string {
   return 'other';
 }
 
+// ===== PORTAL BUTTON SELECTORS TO TEST =====
+const PORTAL_SELECTORS = {
+  // Priority order: dealersite first
+  dealersite: [
+    'a[data-portal="dealersite"]',
+    'button[data-source="dealersite"]',
+    '.portal-button--dealersite',
+    'a[href*="out/"][href*="dealer"]',
+    '[data-testid="portal-dealersite"]',
+    '.outbound-link:first-child',
+    'a.btn-dealersite',
+    // Generic patterns
+    'a[href*="/out/"]',
+    'button:has-text("Dealersite")',
+    'a:has-text("Bekijk op dealersite")',
+  ],
+  autotrack: [
+    'a[data-portal="autotrack"]',
+    'a[href*="autotrack.nl"]',
+    '.portal-button--autotrack',
+    '[data-testid="portal-autotrack"]',
+    'a:has-text("AutoTrack")',
+  ],
+  autoscout24: [
+    'a[data-portal="autoscout24"]',
+    'a[href*="autoscout24"]',
+    '.portal-button--autoscout24',
+  ],
+  marktplaats: [
+    'a[data-portal="marktplaats"]',
+    'a[href*="marktplaats.nl"]',
+    '.portal-button--marktplaats',
+  ],
+};
+
+// ===== FIRECRAWL ACTIONS HELPER =====
+async function scrapeWithFirecrawlActions(
+  url: string,
+  apiKey: string,
+  actions: Array<{ type: string; selector?: string; milliseconds?: number; key?: string; direction?: string }>
+): Promise<{
+  success: boolean;
+  html?: string;
+  markdown?: string;
+  finalUrl?: string;
+  actionsResult?: any;
+  error?: string;
+}> {
+  console.log(`[ACTIONS] Scraping ${url} with ${actions.length} actions`);
+  
+  try {
+    const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        url,
+        formats: ['html', 'markdown'],
+        onlyMainContent: false,
+        waitFor: 5000, // Wait for initial page load
+        actions,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[ACTIONS] Firecrawl error: ${response.status}`, errorText);
+      return { success: false, error: `HTTP ${response.status}: ${errorText.substring(0, 200)}` };
+    }
+
+    const data = await response.json();
+    console.log(`[ACTIONS] Response keys: ${Object.keys(data).join(', ')}`);
+    
+    // Firecrawl v1 nests data
+    const nestedData = data.data || data;
+    
+    return {
+      success: true,
+      html: nestedData.html || '',
+      markdown: nestedData.markdown || '',
+      finalUrl: nestedData.url || nestedData.metadata?.sourceURL || url,
+      actionsResult: nestedData.actions || null,
+    };
+  } catch (error) {
+    console.error(`[ACTIONS] Exception:`, error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+// ===== EXTRACT PORTAL BUTTONS FROM HTML =====
+function extractPortalButtonsFromHtml(html: string): Array<{
+  type: string;
+  selector: string;
+  href: string | null;
+  text: string;
+  dataAttributes: Record<string, string>;
+}> {
+  const buttons: Array<{
+    type: string;
+    selector: string;
+    href: string | null;
+    text: string;
+    dataAttributes: Record<string, string>;
+  }> = [];
+  
+  // Pattern 1: Links with portal-related data attributes
+  const dataPortalPattern = /<a[^>]*data-portal="([^"]+)"[^>]*(?:href="([^"]*)")?[^>]*>([^<]*)</gi;
+  let match;
+  while ((match = dataPortalPattern.exec(html)) !== null) {
+    buttons.push({
+      type: match[1],
+      selector: `a[data-portal="${match[1]}"]`,
+      href: match[2] || null,
+      text: match[3].trim(),
+      dataAttributes: { portal: match[1] },
+    });
+  }
+  
+  // Pattern 2: Outbound links (common Gaspedaal pattern)
+  const outboundPattern = /<a[^>]*href="([^"]*(?:\/out\/|outbound|redirect)[^"]*)"[^>]*(?:class="([^"]*)")?[^>]*>([^<]*)</gi;
+  while ((match = outboundPattern.exec(html)) !== null) {
+    const href = match[1];
+    // Detect portal type from URL
+    let type = 'unknown';
+    if (href.includes('dealersite') || href.includes('dealer')) type = 'dealersite';
+    else if (href.includes('autotrack')) type = 'autotrack';
+    else if (href.includes('autoscout')) type = 'autoscout24';
+    else if (href.includes('marktplaats')) type = 'marktplaats';
+    else if (href.includes('/out/')) type = 'outbound';
+    
+    buttons.push({
+      type,
+      selector: `a[href*="${href.split('/').slice(-2).join('/')}"]`,
+      href,
+      text: match[3].trim(),
+      dataAttributes: { class: match[2] || '' },
+    });
+  }
+  
+  // Pattern 3: Buttons with text indicating portal
+  const bekijkPattern = /Bekijk\s+(?:op|deze\s+auto\s+op)\s+(\w+)/gi;
+  const bekijkMatches = html.matchAll(bekijkPattern);
+  for (const bekijkMatch of bekijkMatches) {
+    const portal = bekijkMatch[1].toLowerCase();
+    if (['dealersite', 'autotrack', 'autoscout24', 'marktplaats', 'anwb'].includes(portal)) {
+      buttons.push({
+        type: portal,
+        selector: `:has-text("Bekijk op ${bekijkMatch[1]}")`,
+        href: null,
+        text: bekijkMatch[0],
+        dataAttributes: {},
+      });
+    }
+  }
+  
+  // Pattern 4: Generic external link buttons in portal section
+  const portalSectionPattern = /<(?:div|section)[^>]*(?:portal|outbound|bekijk)[^>]*>([\s\S]*?)<\/(?:div|section)>/gi;
+  while ((match = portalSectionPattern.exec(html)) !== null) {
+    const sectionHtml = match[1];
+    const linksInSection = sectionHtml.match(/<a[^>]*href="([^"]+)"[^>]*>([^<]*)</gi);
+    if (linksInSection) {
+      for (const linkMatch of linksInSection) {
+        const linkParts = linkMatch.match(/href="([^"]+)"[^>]*>([^<]*)</i);
+        if (linkParts && !linkParts[1].includes('gaspedaal.nl')) {
+          buttons.push({
+            type: 'section_link',
+            selector: `a[href="${linkParts[1]}"]`,
+            href: linkParts[1],
+            text: linkParts[2].trim(),
+            dataAttributes: { context: 'portal_section' },
+          });
+        }
+      }
+    }
+  }
+  
+  return buttons;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -566,14 +747,191 @@ serve(async (req) => {
     }
 
     // Parse request body for optional test mode
-    let testMode = 'index'; // 'index', 'detail', or 'redirect'
+    let testMode = 'index'; // 'index', 'detail', 'redirect', 'proxy', or 'actions'
     let testOccasionId: string | null = null;
+    let clickPortal: string | null = null; // For actions mode: which portal to click
     try {
       const body = await req.json();
       testMode = body.testMode || body.mode || 'index';
       testOccasionId = body.testOccasionId || body.occasionId || null;
-      console.log(`[DEBUG] Request: testMode=${testMode}, testOccasionId=${testOccasionId}`);
+      clickPortal = body.clickPortal || null;
+      console.log(`[DEBUG] Request: testMode=${testMode}, testOccasionId=${testOccasionId}, clickPortal=${clickPortal}`);
     } catch {}
+
+    // ===== FIRECRAWL ACTIONS TEST MODE =====
+    if (testMode === 'actions') {
+      if (!testOccasionId) {
+        return new Response(
+          JSON.stringify({ error: 'testOccasionId required for actions test' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      const occasionUrl = `https://www.gaspedaal.nl/occasion/${testOccasionId}`;
+      console.log(`[ACTIONS] Testing Firecrawl Actions on: ${occasionUrl}`);
+      
+      // STEP 1: First, render the page WITHOUT clicking to discover portal buttons
+      // Use longer wait and scroll to trigger lazy loading
+      console.log('[ACTIONS] Step 1: Rendering page to discover portal buttons...');
+      const discoverResult = await scrapeWithFirecrawlActions(occasionUrl, apiKey, [
+        { type: 'wait', milliseconds: 5000 }, // Wait longer for initial load
+        { type: 'scroll', direction: 'down' }, // Scroll to trigger lazy content
+        { type: 'wait', milliseconds: 3000 }, // Wait for lazy loaded content
+        { type: 'scrape' },
+      ]);
+      
+      if (!discoverResult.success) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            mode: 'actions',
+            step: 'discover',
+            occasionId: testOccasionId,
+            error: discoverResult.error,
+            recommendation: 'Firecrawl failed to render page. Check API key and credits.',
+          }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      const html = discoverResult.html || '';
+      const markdown = discoverResult.markdown || '';
+      console.log(`[ACTIONS] Rendered HTML length: ${html.length}, Markdown length: ${markdown.length}`);
+      
+      // Extract portal buttons from rendered HTML
+      const portalButtons = extractPortalButtonsFromHtml(html);
+      console.log(`[ACTIONS] Found ${portalButtons.length} portal buttons`);
+      
+      // Check if page has real content
+      const hasVehicleContent = html.includes('€') || 
+                                markdown.includes('km') ||
+                                html.includes('Kenteken') ||
+                                markdown.includes('Bouwjaar');
+      
+      const isSkeletonOnly = html.length < 50000 && !hasVehicleContent;
+      
+      // STEP 2: If clickPortal specified, try to click that button
+      let clickResult: any = null;
+      if (clickPortal && portalButtons.length > 0) {
+        console.log(`[ACTIONS] Step 2: Attempting to click ${clickPortal} button...`);
+        
+        // Find the selector for the requested portal
+        const portalButton = portalButtons.find(b => b.type === clickPortal);
+        const selectors = PORTAL_SELECTORS[clickPortal as keyof typeof PORTAL_SELECTORS] || [];
+        const selectorToTry = portalButton?.selector || selectors[0] || 'a[href*="/out/"]';
+        
+        console.log(`[ACTIONS] Using selector: ${selectorToTry}`);
+        
+        const clickActions = [
+          { type: 'wait', milliseconds: 2000 },
+          { type: 'click', selector: selectorToTry },
+          { type: 'wait', milliseconds: 4000 }, // Wait for redirect/navigation
+          { type: 'scrape' }, // Capture final page
+        ];
+        
+        const clickScrapeResult = await scrapeWithFirecrawlActions(occasionUrl, apiKey, clickActions);
+        
+        clickResult = {
+          success: clickScrapeResult.success,
+          selectorUsed: selectorToTry,
+          finalUrl: clickScrapeResult.finalUrl,
+          isExternalUrl: clickScrapeResult.finalUrl && !clickScrapeResult.finalUrl.includes('gaspedaal.nl'),
+          htmlLength: clickScrapeResult.html?.length || 0,
+          error: clickScrapeResult.error,
+          actionsResult: clickScrapeResult.actionsResult,
+        };
+        
+        // Detect source of final URL
+        if (clickResult.isExternalUrl && clickScrapeResult.finalUrl) {
+          clickResult.resolvedSource = detectLinkSource(clickScrapeResult.finalUrl);
+        }
+      }
+      
+      // Extract any direct external links found in rendered HTML
+      const externalLinks: Array<{ source: string; url: string }> = [];
+      const seenUrls = new Set<string>();
+      const hrefPattern = /href="(https?:\/\/(?!www\.gaspedaal\.nl)[^"]+)"/gi;
+      let match;
+      while ((match = hrefPattern.exec(html)) !== null) {
+        const foundUrl = match[1];
+        if (!seenUrls.has(foundUrl)) {
+          seenUrls.add(foundUrl);
+          const source = detectLinkSource(foundUrl);
+          if (source !== 'other') {
+            externalLinks.push({ source, url: foundUrl });
+          }
+        }
+      }
+      
+      return new Response(
+        JSON.stringify({
+          success: true,
+          mode: 'actions',
+          occasionId: testOccasionId,
+          occasionUrl,
+          
+          // Page rendering status
+          renderingStatus: {
+            htmlLength: html.length,
+            markdownLength: markdown.length,
+            hasVehicleContent,
+            isSkeletonOnly,
+            recommendation: hasVehicleContent
+              ? 'Page rendered successfully with vehicle content'
+              : isSkeletonOnly
+                ? 'Page appears to be SPA skeleton - may need more wait time'
+                : 'Page rendered but unclear if content loaded',
+          },
+          
+          // Portal button discovery
+          portalButtonDiscovery: {
+            totalFound: portalButtons.length,
+            buttons: portalButtons,
+            suggestedSelectors: portalButtons.map(b => b.selector),
+            byType: {
+              dealersite: portalButtons.filter(b => b.type === 'dealersite'),
+              autotrack: portalButtons.filter(b => b.type === 'autotrack'),
+              other: portalButtons.filter(b => !['dealersite', 'autotrack'].includes(b.type)),
+            },
+          },
+          
+          // Direct external links (no click required)
+          directExternalLinks: {
+            count: externalLinks.length,
+            links: externalLinks,
+            recommendation: externalLinks.length > 0
+              ? `Found ${externalLinks.length} external links directly in HTML - may not need click action!`
+              : 'No direct external links found - click action required',
+          },
+          
+          // Click test result (if requested)
+          clickTestResult: clickResult,
+          
+          // Recommendations
+          recommendations: [
+            portalButtons.length > 0 
+              ? `Found ${portalButtons.length} portal buttons - try clickPortal: "${portalButtons[0].type}" to test`
+              : 'No portal buttons found - page may use different structure',
+            externalLinks.length > 0
+              ? 'Direct external links available - can use without click action'
+              : 'No direct links - must use click action to resolve',
+            clickResult?.isExternalUrl
+              ? `SUCCESS: Click resolved to external URL: ${clickResult.finalUrl}`
+              : clickResult
+                ? 'Click did not result in external URL navigation'
+                : 'Run with clickPortal parameter to test click navigation',
+          ].filter(Boolean),
+          
+          // Debug info
+          debug: {
+            firecrawlFinalUrl: discoverResult.finalUrl,
+            htmlPreview: html.substring(0, 2000),
+            markdownPreview: markdown.substring(0, 1500),
+          },
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     // ===== PROXY REDIRECT TEST MODE (OpenAI suggested approach) =====
     if (testMode === 'proxy') {
