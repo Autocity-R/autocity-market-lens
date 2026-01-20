@@ -7,7 +7,14 @@ const corsHeaders = {
 
 // ===== REDIRECT API PATTERNS TO TEST =====
 const REDIRECT_PATTERNS = [
-  // Pattern A: API redirect endpoints
+  // ===== OPENAI SUGGESTED PATTERNS (PRIORITY!) =====
+  { name: 'proxy_redirect_dealersite', template: 'https://www.gaspedaal.nl/api/proxy/redirect/vehicle/{occasionId}?app_source=react&portals_amount=1&portals_dealersite=1' },
+  { name: 'proxy_redirect_autotrack', template: 'https://www.gaspedaal.nl/api/proxy/redirect/vehicle/{occasionId}?app_source=react&portals_amount=1&portals_autotrack=1' },
+  { name: 'proxy_redirect_autoscout24', template: 'https://www.gaspedaal.nl/api/proxy/redirect/vehicle/{occasionId}?app_source=react&portals_amount=1&portals_autoscout24=1' },
+  { name: 'proxy_redirect_anwb', template: 'https://www.gaspedaal.nl/api/proxy/redirect/vehicle/{occasionId}?app_source=react&portals_amount=1&portals_anwb=1' },
+  { name: 'proxy_redirect_marktplaats', template: 'https://www.gaspedaal.nl/api/proxy/redirect/vehicle/{occasionId}?app_source=react&portals_amount=1&portals_marktplaats=1' },
+  
+  // Pattern A: API redirect endpoints (original)
   { name: 'api_redirect', template: 'https://www.gaspedaal.nl/api/redirect/{occasionId}?source={source}' },
   { name: 'api_occasion_redirect', template: 'https://www.gaspedaal.nl/api/occasion/{occasionId}/redirect?type={source}' },
   { name: 'api_gaspedaal', template: 'https://api.gaspedaal.nl/redirect/vehicle/{occasionId}' },
@@ -27,6 +34,192 @@ const REDIRECT_PATTERNS = [
 ];
 
 const SOURCES_TO_TEST = ['dealersite', 'autotrack', 'autoscout24', 'anwb', 'marktplaats'];
+
+// ===== COOKIE HANDSHAKE (OpenAI suggestion) =====
+async function getGaspedaalCookieJar(): Promise<{ cookies: string | null; headers: Record<string, string> }> {
+  console.log('[COOKIE] Fetching Gaspedaal homepage for cookies...');
+  try {
+    const res = await fetch('https://www.gaspedaal.nl/', {
+      headers: { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'nl-NL,nl;q=0.9,en;q=0.8',
+      },
+    });
+    
+    const responseHeaders: Record<string, string> = {};
+    res.headers.forEach((value, key) => {
+      responseHeaders[key] = value;
+    });
+    
+    // Get set-cookie headers - Deno style
+    const setCookieHeader = res.headers.get('set-cookie');
+    let cookies: string | null = null;
+    
+    if (setCookieHeader) {
+      // Parse multiple cookies from set-cookie header
+      cookies = setCookieHeader
+        .split(',')
+        .map(c => c.split(';')[0].trim())
+        .filter(c => c.length > 0)
+        .join('; ');
+    }
+    
+    console.log(`[COOKIE] Got cookies: ${cookies ? 'YES' : 'NO'}, length: ${cookies?.length || 0}`);
+    console.log(`[COOKIE] Response headers: ${JSON.stringify(Object.keys(responseHeaders))}`);
+    
+    return { cookies, headers: responseHeaders };
+  } catch (error) {
+    console.error('[COOKIE] Error fetching cookies:', error);
+    return { cookies: null, headers: {} };
+  }
+}
+
+// ===== OPENAI REDIRECT RESOLVER (with cookies) =====
+async function resolveExternalDetailUrl(
+  vehicleId: string,
+  cookieJar: string | null,
+  portalSource: string = 'dealersite'
+): Promise<{ 
+  url: string | null; 
+  source: string; 
+  status: number; 
+  debug: Record<string, unknown>;
+}> {
+  // Build the OpenAI-suggested proxy URL
+  const redirectUrl = `https://www.gaspedaal.nl/api/proxy/redirect/vehicle/${vehicleId}?app_source=react&portals_amount=1&portals_${portalSource}=1`;
+  
+  const headers: Record<string, string> = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'nl-NL,nl;q=0.9,en;q=0.8',
+    'Referer': 'https://www.gaspedaal.nl/',
+    'Origin': 'https://www.gaspedaal.nl',
+    'X-Requested-With': 'XMLHttpRequest',
+  };
+  
+  if (cookieJar) {
+    headers['Cookie'] = cookieJar;
+  }
+  
+  console.log(`[REDIRECT] vehicleId=${vehicleId}, portal=${portalSource}`);
+  console.log(`[REDIRECT] URL: ${redirectUrl}`);
+  console.log(`[REDIRECT] Using cookies: ${cookieJar ? 'YES' : 'NO'}`);
+  
+  try {
+    // Use redirect: 'manual' to capture Location header
+    const res = await fetch(redirectUrl, {
+      method: 'GET',
+      redirect: 'manual',
+      headers,
+    });
+    
+    const responseHeaders: Record<string, string> = {};
+    res.headers.forEach((value, key) => {
+      responseHeaders[key] = value;
+    });
+    
+    console.log(`[REDIRECT] Status: ${res.status}`);
+    
+    // Check for redirect (301/302/303/307/308)
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get('location');
+      console.log(`[REDIRECT] SUCCESS! Location: ${location}`);
+      
+      if (location && !location.includes('gaspedaal.nl')) {
+        const detectedSource = detectLinkSourceInternal(location);
+        return {
+          url: location,
+          source: detectedSource,
+          status: res.status,
+          debug: { redirectUrl, responseHeaders, method: 'redirect_header' }
+        };
+      }
+    }
+    
+    // If 200, check body for JSON with URL
+    if (res.status === 200) {
+      const text = await res.text();
+      console.log(`[REDIRECT] 200 response, body length: ${text.length}`);
+      console.log(`[REDIRECT] Body preview: ${text.substring(0, 300)}`);
+      
+      if (text.startsWith('{') || text.startsWith('[')) {
+        try {
+          const json = JSON.parse(text);
+          const url = json.url || json.redirect || json.location || json.redirectUrl || json.external_url;
+          if (url && !url.includes('gaspedaal.nl')) {
+            const detectedSource = detectLinkSourceInternal(url);
+            console.log(`[REDIRECT] Found URL in JSON: ${url}`);
+            return {
+              url,
+              source: detectedSource,
+              status: res.status,
+              debug: { redirectUrl, responseHeaders, method: 'json_body', jsonKeys: Object.keys(json) }
+            };
+          }
+        } catch (e) {
+          console.log(`[REDIRECT] JSON parse failed: ${e}`);
+        }
+      }
+      
+      return {
+        url: null,
+        source: portalSource,
+        status: res.status,
+        debug: { redirectUrl, responseHeaders, bodyPreview: text.substring(0, 500), method: 'no_url_found' }
+      };
+    }
+    
+    // 403 or other error
+    let bodyPreview = '';
+    try {
+      bodyPreview = await res.text();
+      bodyPreview = bodyPreview.substring(0, 500);
+    } catch {}
+    
+    console.error(`[REDIRECT] Failed with status ${res.status}`);
+    console.error(`[REDIRECT] Response headers: ${JSON.stringify(responseHeaders)}`);
+    console.error(`[REDIRECT] Body preview: ${bodyPreview}`);
+    
+    return {
+      url: null,
+      source: portalSource,
+      status: res.status,
+      debug: { redirectUrl, responseHeaders, bodyPreview, method: 'error', headersUsed: Object.keys(headers) }
+    };
+  } catch (error) {
+    console.error(`[REDIRECT] Exception: ${error}`);
+    return {
+      url: null,
+      source: portalSource,
+      status: 0,
+      debug: { redirectUrl, error: String(error), method: 'exception' }
+    };
+  }
+}
+
+// Internal helper to detect source (same as detectLinkSource but for internal use)
+function detectLinkSourceInternal(url: string): string {
+  if (url.includes('autotrack')) return 'autotrack';
+  if (url.includes('autoscout24')) return 'autoscout24';
+  if (url.includes('anwb.nl')) return 'anwb';
+  if (url.includes('marktplaats')) return 'marktplaats';
+  if (url.includes('autowereld')) return 'autowereld';
+  if (url.includes('autoweek')) return 'autoweek';
+  if (url.includes('viabovag')) return 'viabovag';
+  
+  const knownNonDealerDomains = ['gaspedaal.nl', 'autotrack.nl', 'autoscout24.nl', 'anwb.nl', 
+                        'marktplaats.nl', 'autowereld.nl', 'autoweek.nl', 'viabovag.nl',
+                        'apple.com', 'google.com', 'facebook.com', 'instagram.com',
+                        'youtube.com', 'twitter.com', 'linkedin.com'];
+  const isKnownNonDealer = knownNonDealerDomains.some(domain => url.includes(domain));
+  
+  if (!isKnownNonDealer && url.startsWith('http')) {
+    return 'dealersite';
+  }
+  
+  return 'other';
+}
 
 // ===== REDIRECT RESOLVER FUNCTION =====
 async function testRedirectPattern(
@@ -123,7 +316,107 @@ async function testRedirectPattern(
   }
 }
 
-// ===== GASPEDAAL PAGE LINK EXTRACTION =====
+// ===== REDIRECT RESOLVER WITH COOKIES =====
+async function testRedirectPatternWithCookies(
+  pattern: string,
+  occasionId: string,
+  source: string,
+  cookieJar: string | null
+): Promise<{ 
+  pattern: string; 
+  status: number; 
+  location: string | null; 
+  isRedirect: boolean;
+  headers: Record<string, string>;
+  bodyPreview: string | null;
+  error: string | null;
+}> {
+  const url = pattern
+    .replace('{occasionId}', occasionId)
+    .replace('{source}', source);
+  
+  const requestHeaders: Record<string, string> = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'nl-NL,nl;q=0.9,en;q=0.8',
+    'Referer': 'https://www.gaspedaal.nl/',
+    'Origin': 'https://www.gaspedaal.nl',
+  };
+  
+  if (cookieJar) {
+    requestHeaders['Cookie'] = cookieJar;
+  }
+  
+  try {
+    // Try HEAD first (faster, no body)
+    const headResponse = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'manual',
+      headers: requestHeaders,
+    });
+    
+    const headersObj: Record<string, string> = {};
+    headResponse.headers.forEach((value, key) => {
+      headersObj[key] = value;
+    });
+    
+    const location = headResponse.headers.get('location');
+    const isRedirect = headResponse.status >= 300 && headResponse.status < 400;
+    
+    // If not a redirect, try GET to see if body contains redirect info
+    let bodyPreview: string | null = null;
+    if (!isRedirect && headResponse.status === 200) {
+      try {
+        const getResponse = await fetch(url, {
+          method: 'GET',
+          redirect: 'manual',
+          headers: requestHeaders,
+        });
+        const text = await getResponse.text();
+        bodyPreview = text.substring(0, 500);
+        
+        // Check for JSON response with URL
+        if (text.startsWith('{')) {
+          try {
+            const json = JSON.parse(text);
+            if (json.url || json.redirect || json.location) {
+              return {
+                pattern: url,
+                status: getResponse.status,
+                location: json.url || json.redirect || json.location,
+                isRedirect: true,
+                headers: headersObj,
+                bodyPreview,
+                error: null,
+              };
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+    
+    return {
+      pattern: url,
+      status: headResponse.status,
+      location,
+      isRedirect,
+      headers: headersObj,
+      bodyPreview,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      pattern: url,
+      status: 0,
+      location: null,
+      isRedirect: false,
+      headers: {},
+      bodyPreview: null,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
 async function extractLinksFromGaspedaalPage(
   occasionId: string,
   apiKey: string
@@ -282,7 +575,96 @@ serve(async (req) => {
       console.log(`[DEBUG] Request: testMode=${testMode}, testOccasionId=${testOccasionId}`);
     } catch {}
 
-    // ===== REDIRECT TEST MODE (NEW!) =====
+    // ===== PROXY REDIRECT TEST MODE (OpenAI suggested approach) =====
+    if (testMode === 'proxy') {
+      if (!testOccasionId) {
+        return new Response(
+          JSON.stringify({ error: 'testOccasionId required for proxy test' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      console.log(`[PROXY] Testing OpenAI proxy pattern for occasion ID: ${testOccasionId}`);
+      
+      // Step 1: Get cookies from Gaspedaal homepage
+      const { cookies: cookieJar, headers: cookieResponseHeaders } = await getGaspedaalCookieJar();
+      
+      // Step 2: Try each portal source with the proxy pattern
+      const proxyResults: Array<{
+        portal: string;
+        result: { url: string | null; source: string; status: number; debug: Record<string, unknown> };
+      }> = [];
+      
+      for (const portal of SOURCES_TO_TEST) {
+        console.log(`[PROXY] Testing portal: ${portal}`);
+        const result = await resolveExternalDetailUrl(testOccasionId, cookieJar, portal);
+        proxyResults.push({ portal, result });
+        
+        // If we found a working URL, highlight it
+        if (result.url) {
+          console.log(`[PROXY] SUCCESS with ${portal}: ${result.url}`);
+        }
+        
+        // Small delay between requests
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+      
+      // Find successful results
+      const successfulResults = proxyResults.filter(r => r.result.url !== null);
+      const dealersiteResult = proxyResults.find(r => r.portal === 'dealersite');
+      
+      return new Response(
+        JSON.stringify({
+          success: true,
+          mode: 'proxy',
+          occasionId: testOccasionId,
+          
+          // Cookie handshake info
+          cookieHandshake: {
+            hasCookies: !!cookieJar,
+            cookiePreview: cookieJar?.substring(0, 150) || null,
+            cookieLength: cookieJar?.length || 0,
+            responseHeaders: cookieResponseHeaders,
+          },
+          
+          // Summary
+          summary: {
+            totalPortalsTested: proxyResults.length,
+            successfulResolutions: successfulResults.length,
+            portalsWithUrls: successfulResults.map(r => r.portal),
+            recommendation: successfulResults.length > 0
+              ? `SUCCESS: Found ${successfulResults.length} external URLs! Use ${successfulResults[0].portal} for scraping.`
+              : cookieJar
+                ? 'FAILED: Cookie handshake worked but still no URLs resolved. Gaspedaal may be blocking proxy requests entirely.'
+                : 'FAILED: No cookies obtained. Cookie handshake failed.',
+          },
+          
+          // Best result (prioritize dealersite)
+          bestResult: successfulResults.length > 0
+            ? successfulResults.find(r => r.portal === 'dealersite') || successfulResults[0]
+            : null,
+          
+          // Dealersite specific (most important for us)
+          dealersiteResult: dealersiteResult ? {
+            status: dealersiteResult.result.status,
+            url: dealersiteResult.result.url,
+            debug: dealersiteResult.result.debug,
+          } : null,
+          
+          // All results
+          allResults: proxyResults.map(r => ({
+            portal: r.portal,
+            status: r.result.status,
+            url: r.result.url,
+            source: r.result.source,
+            debug: r.result.debug,
+          })),
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // ===== REDIRECT TEST MODE (original pattern testing) =====
     if (testMode === 'redirect') {
       if (!testOccasionId) {
         return new Response(
@@ -292,6 +674,10 @@ serve(async (req) => {
       }
       
       console.log(`[DEBUG] Testing redirect patterns for occasion ID: ${testOccasionId}`);
+      
+      // Also get cookies for this test
+      const { cookies: cookieJar } = await getGaspedaalCookieJar();
+      console.log(`[DEBUG] Using cookies: ${cookieJar ? 'YES' : 'NO'}`);
       
       const results: Array<{
         patternName: string;
@@ -307,11 +693,11 @@ serve(async (req) => {
         };
       }> = [];
       
-      // Test all patterns with all sources
+      // Test all patterns with all sources (now with cookies)
       for (const pattern of REDIRECT_PATTERNS) {
         for (const source of SOURCES_TO_TEST) {
           console.log(`[DEBUG] Testing pattern: ${pattern.name} with source: ${source}`);
-          const result = await testRedirectPattern(pattern.template, testOccasionId, source);
+          const result = await testRedirectPatternWithCookies(pattern.template, testOccasionId, source, cookieJar);
           results.push({
             patternName: pattern.name,
             source,
@@ -345,6 +731,7 @@ serve(async (req) => {
           success: true,
           mode: 'redirect',
           occasionId: testOccasionId,
+          hasCookies: !!cookieJar,
           
           // Summary
           summary: {
@@ -356,7 +743,7 @@ serve(async (req) => {
               ? `SUCCESS: Found ${successfulRedirects.length} working redirect patterns!`
               : pageLinks.externalLinks && pageLinks.externalLinks.length > 0
                 ? `PARTIAL: No redirects, but found ${pageLinks.externalLinks.length} links on page`
-                : 'FAILED: No external URLs found. Need alternative approach.',
+                : 'FAILED: No external URLs found. Try testMode=proxy for OpenAI approach.',
           },
           
           // Successful redirects
