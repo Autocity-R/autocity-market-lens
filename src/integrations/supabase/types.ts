@@ -545,6 +545,7 @@ export type Database = {
       }
       raw_listings: {
         Row: {
+          available_sources: string[] | null
           canonical_url: string | null
           chosen_detail_source: string | null
           chosen_detail_url: string | null
@@ -569,6 +570,9 @@ export type Database = {
           options_raw_text: string | null
           outbound_links: Json | null
           portal_listing_id: string | null
+          portal_match_score: number | null
+          portal_matched_url: string | null
+          portal_source: string | null
           raw_mileage: string | null
           raw_price: string | null
           raw_specs: Json | null
@@ -580,6 +584,7 @@ export type Database = {
           vin_hash: string | null
         }
         Insert: {
+          available_sources?: string[] | null
           canonical_url?: string | null
           chosen_detail_source?: string | null
           chosen_detail_url?: string | null
@@ -604,6 +609,9 @@ export type Database = {
           options_raw_text?: string | null
           outbound_links?: Json | null
           portal_listing_id?: string | null
+          portal_match_score?: number | null
+          portal_matched_url?: string | null
+          portal_source?: string | null
           raw_mileage?: string | null
           raw_price?: string | null
           raw_specs?: Json | null
@@ -615,6 +623,7 @@ export type Database = {
           vin_hash?: string | null
         }
         Update: {
+          available_sources?: string[] | null
           canonical_url?: string | null
           chosen_detail_source?: string | null
           chosen_detail_url?: string | null
@@ -639,6 +648,9 @@ export type Database = {
           options_raw_text?: string | null
           outbound_links?: Json | null
           portal_listing_id?: string | null
+          portal_match_score?: number | null
+          portal_matched_url?: string | null
+          portal_source?: string | null
           raw_mileage?: string | null
           raw_price?: string | null
           raw_specs?: Json | null
