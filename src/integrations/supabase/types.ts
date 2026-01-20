@@ -224,6 +224,8 @@ export type Database = {
           taxation_ready: boolean | null
           title: string
           transmission: string | null
+          trim: string | null
+          trim_confidence: string | null
           url: string
           vehicle_fingerprint: string | null
           vin: string | null
@@ -297,6 +299,8 @@ export type Database = {
           taxation_ready?: boolean | null
           title: string
           transmission?: string | null
+          trim?: string | null
+          trim_confidence?: string | null
           url: string
           vehicle_fingerprint?: string | null
           vin?: string | null
@@ -370,6 +374,8 @@ export type Database = {
           taxation_ready?: boolean | null
           title?: string
           transmission?: string | null
+          trim?: string | null
+          trim_confidence?: string | null
           url?: string
           vehicle_fingerprint?: string | null
           vin?: string | null
