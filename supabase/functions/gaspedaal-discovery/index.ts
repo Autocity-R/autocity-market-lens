@@ -552,7 +552,7 @@ Deno.serve(async (req) => {
     for (const hit of slice) {
       detailsAttempted++;
       try {
-        const html = await fetchHtml(hit.url);
+        const html = await fetchHtml(hit.url, AUTOTRACK_HEADERS);
         const parsed = parseDetailHtml(html, hit.url, hit.id);
         detailsParsed++;
         const res = await upsertRawListing(supabase, parsed);
@@ -569,7 +569,8 @@ Deno.serve(async (req) => {
           message: e instanceof Error ? e.message : String(e),
         });
       }
-      await new Promise((r) => setTimeout(r, 800));
+      // Randomized 2000-3000ms delay to look more human
+      await new Promise((r) => setTimeout(r, 2000 + Math.floor(Math.random() * 1000)));
     }
   }
 
