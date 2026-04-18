@@ -564,7 +564,7 @@ Deno.serve(async (req) => {
   let inserted = 0;
   let updated = 0;
 
-  if (params.mode === "full" && totalHits.length > 0) {
+  if ((params.mode === "full" || params.mode === "scrape-ids") && totalHits.length > 0) {
     const slice = totalHits.slice(0, params.detailLimit);
     for (const hit of slice) {
       detailsAttempted++;
