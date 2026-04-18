@@ -73,17 +73,29 @@ function buildIndexUrl(make: string | undefined, model: string | undefined, page
   return `${base}${path}?pagina=${page}`;
 }
 
-async function fetchHtml(url: string, timeoutMs = 25_000): Promise<string> {
+async function fetchHtml(
+  url: string,
+  extraHeaders: Record<string, string> = {},
+  timeoutMs = 25_000,
+): Promise<string> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { headers: BROWSER_HEADERS, signal: ctrl.signal });
+    const res = await fetch(url, {
+      headers: { ...BROWSER_HEADERS, ...extraHeaders },
+      signal: ctrl.signal,
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
     return await res.text();
   } finally {
     clearTimeout(t);
   }
 }
+
+const AUTOTRACK_HEADERS: Record<string, string> = {
+  "Referer": "https://www.gaspedaal.nl/",
+  "Sec-Fetch-Site": "cross-site",
+};
 
 async function sha256(input: string): Promise<string> {
   const data = new TextEncoder().encode(input);
