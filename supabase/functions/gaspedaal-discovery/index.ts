@@ -34,7 +34,8 @@ interface DiscoveryParams {
   model?: string;
   pages: number;
   detailLimit: number;
-  mode: "discovery" | "full";
+  mode: "discovery" | "full" | "scrape-ids";
+  ids?: string[];
 }
 
 interface AutoTrackHit {
@@ -499,10 +500,13 @@ Deno.serve(async (req) => {
       0,
       Math.min(500, Number(body.detailLimit ?? url.searchParams.get("detailLimit") ?? 25)),
     ),
-    mode:
-      (body.mode ?? url.searchParams.get("mode") ?? "discovery") === "full"
-        ? "full"
-        : "discovery",
+    mode: (() => {
+      const m = body.mode ?? url.searchParams.get("mode") ?? "discovery";
+      if (m === "full") return "full";
+      if (m === "scrape-ids") return "scrape-ids";
+      return "discovery";
+    })(),
+    ids: Array.isArray(body.ids) ? body.ids.map((x: unknown) => String(x)) : undefined,
   };
 
   const supabase = createClient(
@@ -512,15 +516,28 @@ Deno.serve(async (req) => {
 
   const jobId = await createJob(
     supabase,
-    params.mode === "full" ? "deep_sync" : "discovery",
+    params.mode === "discovery" ? "discovery" : "deep_sync",
   );
 
   const errors: Array<{ stage: string; url?: string; message: string }> = [];
   const indexUrls: string[] = [];
   let totalHits: AutoTrackHit[] = [];
 
+  // Mode: scrape-ids — skip Gaspedaal entirely, build hits from provided IDs
+  if (params.mode === "scrape-ids") {
+    const ids = (params.ids ?? []).filter((id) => /^\d{6,9}$/.test(id));
+    for (const id of ids) {
+      totalHits.push({
+        id,
+        url: `https://www.autotrack.nl/aanbod/${id}`,
+        imageUrl: null,
+        gaspedaalIndexUrl: "",
+      });
+    }
+  }
+
   // Stage A — Discovery: fetch Gaspedaal index pages, extract AutoTrack IDs
-  for (let p = 1; p <= params.pages; p++) {
+  if (params.mode !== "scrape-ids") for (let p = 1; p <= params.pages; p++) {
     const idxUrl = buildIndexUrl(params.make, params.model, p);
     indexUrls.push(idxUrl);
     try {
@@ -547,7 +564,7 @@ Deno.serve(async (req) => {
   let inserted = 0;
   let updated = 0;
 
-  if (params.mode === "full" && totalHits.length > 0) {
+  if ((params.mode === "full" || params.mode === "scrape-ids") && totalHits.length > 0) {
     const slice = totalHits.slice(0, params.detailLimit);
     for (const hit of slice) {
       detailsAttempted++;
