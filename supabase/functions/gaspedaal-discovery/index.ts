@@ -73,17 +73,29 @@ function buildIndexUrl(make: string | undefined, model: string | undefined, page
   return `${base}${path}?pagina=${page}`;
 }
 
-async function fetchHtml(url: string, timeoutMs = 25_000): Promise<string> {
+async function fetchHtml(
+  url: string,
+  extraHeaders: Record<string, string> = {},
+  timeoutMs = 25_000,
+): Promise<string> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { headers: BROWSER_HEADERS, signal: ctrl.signal });
+    const res = await fetch(url, {
+      headers: { ...BROWSER_HEADERS, ...extraHeaders },
+      signal: ctrl.signal,
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
     return await res.text();
   } finally {
     clearTimeout(t);
   }
 }
+
+const AUTOTRACK_HEADERS: Record<string, string> = {
+  "Referer": "https://www.gaspedaal.nl/",
+  "Sec-Fetch-Site": "cross-site",
+};
 
 async function sha256(input: string): Promise<string> {
   const data = new TextEncoder().encode(input);
@@ -540,7 +552,7 @@ Deno.serve(async (req) => {
     for (const hit of slice) {
       detailsAttempted++;
       try {
-        const html = await fetchHtml(hit.url);
+        const html = await fetchHtml(hit.url, AUTOTRACK_HEADERS);
         const parsed = parseDetailHtml(html, hit.url, hit.id);
         detailsParsed++;
         const res = await upsertRawListing(supabase, parsed);
@@ -557,7 +569,8 @@ Deno.serve(async (req) => {
           message: e instanceof Error ? e.message : String(e),
         });
       }
-      await new Promise((r) => setTimeout(r, 800));
+      // Randomized 2000-3000ms delay to look more human
+      await new Promise((r) => setTimeout(r, 2000 + Math.floor(Math.random() * 1000)));
     }
   }
 
